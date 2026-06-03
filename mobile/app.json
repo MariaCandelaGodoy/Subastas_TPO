@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "BidVault",
+    "slug": "bidvault",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/bidvault-logo.png",
+    "scheme": "bidvault",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/bidvault-logo.png",
+      "backgroundColor": "#E7DFC7",
+      "resizeMode": "contain"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": { "supportsTablet": true },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/bidvault-logo.png",
+        "backgroundColor": "#E7DFC7"
+      }
+    },
+    "extra": {
+      "apiUrl": "http://localhost:8080/api"
+    }
+  }
+}

@@ -1,0 +1,344 @@
+package com.bidvault.api;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api")
+public class ApiController {
+  private final JdbcTemplate jdbc;
+  private final PasswordEncoder encoder;
+
+  public ApiController(JdbcTemplate jdbc, PasswordEncoder encoder) {
+    this.jdbc = jdbc;
+    this.encoder = encoder;
+  }
+
+  @GetMapping("/health")
+  Map<String, Object> health() {
+    return Map.of("status", "ok", "database", "bidvault");
+  }
+
+  @PostMapping("/auth/login")
+  Map<String, Object> login(@RequestBody LoginRequest request) {
+    var users = jdbc.queryForList("""
+        SELECT u.identificador usuario_id, u.email, u.password_hash, u.password_temporal, u.rol,
+               p.identificador persona_id, p.nombre, p.direccion, c.categoria, c.admitido
+        FROM usuarios_app u
+        JOIN personas p ON p.identificador = u.persona
+        LEFT JOIN clientes c ON c.identificador = p.identificador
+        WHERE u.email = ?
+        """, request.email());
+    if (users.isEmpty() || !encoder.matches(request.password(), Objects.toString(users.get(0).get("password_hash")))) {
+      throw new ApiException(HttpStatus.UNAUTHORIZED, "Email o contraseña incorrectos");
+    }
+    var user = users.get(0);
+    user.remove("password_hash");
+    return Map.of("token", "demo-token-" + user.get("usuario_id"), "user", user);
+  }
+
+  @PostMapping("/auth/register")
+  @Transactional
+  Map<String, Object> register(@RequestBody RegisterRequest request) {
+    require(request.nombre(), "El nombre es obligatorio");
+    require(request.apellido(), "El apellido es obligatorio");
+    require(request.email(), "El email es obligatorio");
+    require(request.documento(), "El documento es obligatorio");
+    require(request.direccion(), "El domicilio es obligatorio");
+
+    int personaId = insertAndReturnKey(
+        "INSERT INTO personas (documento, nombre, direccion, estado) VALUES (?, ?, ?, 'activo')",
+        request.documento(), request.nombre() + " " + request.apellido(), request.direccion());
+    jdbc.update("""
+        INSERT INTO clientes (identificador, numeroPais, admitido, categoria, verificador)
+        VALUES (?, ?, 'no', 'comun', 1)
+        """, personaId, request.numeroPais() == null ? 32 : request.numeroPais());
+    jdbc.update("""
+        INSERT INTO duenios (identificador, numeroPais, `verificaciónFinanciera`, `verificaciónJudicial`, calificacionRiesgo, verificador)
+        VALUES (?, ?, 'no', 'no', 6, 1)
+        """, personaId, request.numeroPais() == null ? 32 : request.numeroPais());
+    jdbc.update("""
+        INSERT INTO usuarios_app (persona, email, password_hash, password_temporal, rol)
+        VALUES (?, ?, ?, 'si', 'cliente')
+        """, personaId, request.email().trim().toLowerCase(), encoder.encode(request.password() == null ? "Temporal123" : request.password()));
+    jdbc.update("""
+        INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
+        VALUES (?, 'Registrado', 'Su registro fue recibido. Le enviaremos un correo cuando la validación se complete.', 'importante')
+        """, personaId);
+    return Map.of("persona_id", personaId, "estado", "pendiente_validacion");
+  }
+
+  @GetMapping("/auctions")
+  List<Map<String, Object>> auctions(@RequestParam(required = false) Integer clienteId,
+                                      @RequestParam(required = false) String tab,
+                                      @RequestParam(required = false) String q) {
+    String sql = """
+        SELECT s.identificador id, c.descripcion titulo, s.fecha, s.hora, s.estado, s.categoria,
+               s.ubicacion, MIN(i.precioBase) precio_desde,
+               CASE WHEN s.categoria IN ('oro','platino') THEN 'USD' ELSE 'ARS' END moneda,
+               COUNT(i.identificador) piezas,
+               EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta = s.identificador AND f.cliente = COALESCE(?, -1)) favorito
+        FROM subastas s
+        JOIN catalogos c ON c.subasta = s.identificador
+        JOIN itemsCatalogo i ON i.catalogo = c.identificador
+        WHERE (? IS NULL OR c.descripcion LIKE CONCAT('%', ?, '%'))
+        GROUP BY s.identificador, c.descripcion, s.fecha, s.hora, s.estado, s.categoria, s.ubicacion
+        ORDER BY s.fecha, s.hora
+        """;
+    return jdbc.queryForList(sql, clienteId, q, q);
+  }
+
+  @GetMapping("/auctions/{id}")
+  Map<String, Object> auction(@PathVariable int id, @RequestParam(required = false) Integer clienteId) {
+    var rows = jdbc.queryForList("""
+        SELECT s.identificador id, c.identificador catalogo_id, c.descripcion titulo, s.fecha, s.hora,
+               s.estado, s.categoria, s.ubicacion, s.capacidadAsistentes, s.tieneDeposito, s.seguridadPropia,
+               p.nombre subastador, EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta=s.identificador AND f.cliente=COALESCE(?, -1)) favorito
+        FROM subastas s
+        JOIN catalogos c ON c.subasta = s.identificador
+        LEFT JOIN personas p ON p.identificador = s.subastador
+        WHERE s.identificador = ?
+        """, clienteId, id);
+    if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "Subasta no encontrada");
+    var items = jdbc.queryForList("""
+        SELECT i.identificador item_id, pr.identificador producto_id, pr.descripcionCatalogo descripcion,
+               pr.descripcionCompleta pdf, pr.disponible, i.precioBase, i.comision, i.subastado,
+               COALESCE(MAX(pu.importe), i.precioBase) mejor_oferta,
+               (SELECT pe.nombre FROM pujos p2 JOIN asistentes a2 ON a2.identificador=p2.asistente JOIN personas pe ON pe.identificador=a2.cliente
+                WHERE p2.item=i.identificador ORDER BY p2.importe DESC, p2.identificador DESC LIMIT 1) mejor_postor
+        FROM itemsCatalogo i
+        JOIN productos pr ON pr.identificador = i.producto
+        LEFT JOIN pujos pu ON pu.item = i.identificador
+        WHERE i.catalogo = ?
+        GROUP BY i.identificador, pr.identificador, pr.descripcionCatalogo, pr.descripcionCompleta, pr.disponible, i.precioBase, i.comision, i.subastado
+        """, rows.get(0).get("catalogo_id"));
+    return Map.of("auction", rows.get(0), "items", items);
+  }
+
+  @PostMapping("/auctions/{id}/join")
+  @Transactional
+  Map<String, Object> joinAuction(@PathVariable int id, @RequestBody ClientRequest request) {
+    ensureCanParticipate(request.clienteId(), id, false);
+    jdbc.update("UPDATE sesiones_subasta SET activa='no' WHERE cliente=? AND activa='si'", request.clienteId());
+    int postor = 100 + request.clienteId();
+    jdbc.update("INSERT IGNORE INTO asistentes (numeroPostor, cliente, subasta) VALUES (?, ?, ?)", postor, request.clienteId(), id);
+    int sessionId = insertAndReturnKey("INSERT INTO sesiones_subasta (cliente, subasta, activa) VALUES (?, ?, 'si')", request.clienteId(), id);
+    return Map.of("sesion_id", sessionId, "numero_postor", postor);
+  }
+
+  @PostMapping("/bids")
+  @Transactional
+  Map<String, Object> bid(@RequestBody BidRequest request) {
+    requirePositive(request.importe(), "El importe debe ser mayor a cero");
+    var data = one("""
+        SELECT i.identificador item_id, i.precioBase, i.comision, c.subasta, s.categoria subasta_categoria,
+               COALESCE(MAX(pu.importe), i.precioBase) mejor_oferta
+        FROM itemsCatalogo i
+        JOIN catalogos c ON c.identificador = i.catalogo
+        JOIN subastas s ON s.identificador = c.subasta
+        LEFT JOIN pujos pu ON pu.item = i.identificador
+        WHERE i.identificador = ?
+        GROUP BY i.identificador, i.precioBase, i.comision, c.subasta, s.categoria
+        FOR UPDATE
+        """, "Ítem no encontrado", request.itemId());
+    int subastaId = ((Number) data.get("subasta")).intValue();
+    ensureCanParticipate(request.clienteId(), subastaId, true);
+    BigDecimal base = (BigDecimal) data.get("precioBase");
+    BigDecimal current = (BigDecimal) data.get("mejor_oferta");
+    BigDecimal amount = request.importe().setScale(2, RoundingMode.HALF_UP);
+    String category = data.get("subasta_categoria").toString();
+    BigDecimal min = current.add(base.multiply(new BigDecimal("0.01"))).setScale(2, RoundingMode.HALF_UP);
+    BigDecimal max = current.add(base.multiply(new BigDecimal("0.20"))).setScale(2, RoundingMode.HALF_UP);
+    if (amount.compareTo(min) < 0) throw new ApiException(HttpStatus.BAD_REQUEST, "La puja mínima es " + min);
+    if (!category.equals("oro") && !category.equals("platino") && amount.compareTo(max) > 0) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "La puja máxima para esta categoría es " + max);
+    }
+    int asistenteId = ensureAssistant(request.clienteId(), subastaId);
+    jdbc.update("UPDATE pujos SET ganador='no' WHERE item=?", request.itemId());
+    int bidId = insertAndReturnKey("INSERT INTO pujos (asistente, item, importe, ganador) VALUES (?, ?, ?, 'si')",
+        asistenteId, request.itemId(), amount);
+    return Map.of("puja_id", bidId, "item_id", request.itemId(), "importe", amount, "ganador", "si");
+  }
+
+  @PostMapping("/auctions/{id}/close-item/{itemId}")
+  @Transactional
+  Map<String, Object> closeItem(@PathVariable int id, @PathVariable int itemId) {
+    var winner = jdbc.queryForList("""
+        SELECT p.identificador puja_id, a.cliente, p.importe, pr.duenio, pr.identificador producto, i.comision
+        FROM pujos p
+        JOIN asistentes a ON a.identificador=p.asistente
+        JOIN itemsCatalogo i ON i.identificador=p.item
+        JOIN productos pr ON pr.identificador=i.producto
+        WHERE p.item=? ORDER BY p.importe DESC, p.identificador DESC LIMIT 1
+        """, itemId);
+    if (winner.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "No hay pujas para cerrar");
+    var w = winner.get(0);
+    BigDecimal importe = (BigDecimal) w.get("importe");
+    BigDecimal comisionPct = (BigDecimal) w.get("comision");
+    BigDecimal comision = importe.multiply(comisionPct).setScale(2, RoundingMode.HALF_UP);
+    int registro = insertAndReturnKey("""
+        INSERT INTO registroDeSubasta (subasta, duenio, producto, cliente, importe, comision)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, id, w.get("duenio"), w.get("producto"), w.get("cliente"), importe, comision);
+    jdbc.update("UPDATE itemsCatalogo SET subastado='si' WHERE identificador=?", itemId);
+    jdbc.update("UPDATE productos SET disponible='no' WHERE identificador=?", w.get("producto"));
+    jdbc.update("""
+        INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
+        VALUES (?, 'Ganaste la subasta', ?, 'importante')
+        """, w.get("cliente"), "Importe: " + importe + ". Comisión: " + comision + ". Coordiná envío o retiro.");
+    return Map.of("registro_id", registro, "importe", importe, "comision", comision);
+  }
+
+  @GetMapping("/payments/{clienteId}")
+  List<Map<String, Object>> payments(@PathVariable int clienteId) {
+    return jdbc.queryForList("SELECT * FROM medios_pago WHERE cliente=? ORDER BY activo DESC, identificador DESC", clienteId);
+  }
+
+  @PostMapping("/payments")
+  Map<String, Object> addPayment(@RequestBody PaymentRequest request) {
+    int id = insertAndReturnKey("""
+        INSERT INTO medios_pago (cliente, tipo, moneda, entidad, referencia, monto_reservado, verificado, activo)
+        VALUES (?, ?, ?, ?, ?, ?, 'no', 'si')
+        """, request.clienteId(), request.tipo(), request.moneda(), request.entidad(), request.referencia(), request.montoReservado());
+    return Map.of("medio_pago_id", id, "verificado", "no");
+  }
+
+  @PostMapping("/favorites")
+  Map<String, Object> favorite(@RequestBody FavoriteRequest request) {
+    jdbc.update("INSERT IGNORE INTO favoritos (cliente, subasta) VALUES (?, ?)", request.clienteId(), request.subastaId());
+    return Map.of("favorito", true);
+  }
+
+  @DeleteMapping("/favorites")
+  Map<String, Object> unfavorite(@RequestBody FavoriteRequest request) {
+    jdbc.update("DELETE FROM favoritos WHERE cliente=? AND subasta=?", request.clienteId(), request.subastaId());
+    return Map.of("favorito", false);
+  }
+
+  @PostMapping("/sell-requests")
+  @Transactional
+  Map<String, Object> sellRequest(@RequestBody SellRequest request) {
+    if (request.fotos() == null || request.fotos().size() < 6) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "Debe cargar al menos 6 fotos");
+    }
+    int id = insertAndReturnKey("""
+        INSERT INTO solicitudes_productos
+        (duenio, titulo, descripcion, historia, origen_licito, declaracion_propiedad, acepta_devolucion_cargo, estado)
+        VALUES (?, ?, ?, ?, 'si', 'si', 'si', 'pendiente')
+        """, request.duenioId(), request.titulo(), request.descripcion(), request.historia());
+    for (String url : request.fotos()) {
+      jdbc.update("INSERT INTO solicitudes_fotos (solicitud, url) VALUES (?, ?)", id, url);
+    }
+    jdbc.update("""
+        INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
+        VALUES (?, 'Producto enviado a revisión', 'Recibimos tu solicitud y la empresa revisará el bien.', 'importante')
+        """, request.duenioId());
+    return Map.of("solicitud_id", id, "estado", "pendiente");
+  }
+
+  @GetMapping("/profile/{clienteId}/metrics")
+  Map<String, Object> metrics(@PathVariable int clienteId) {
+    var base = one("""
+        SELECT p.nombre, c.categoria, c.admitido,
+               (SELECT COUNT(*) FROM asistentes a WHERE a.cliente=c.identificador) subastas_asistidas,
+               (SELECT COUNT(*) FROM registroDeSubasta r WHERE r.cliente=c.identificador) subastas_ganadas,
+               (SELECT COUNT(*) FROM pujos pu JOIN asistentes a ON a.identificador=pu.asistente WHERE a.cliente=c.identificador) pujas_realizadas,
+               (SELECT COALESCE(SUM(r.importe + r.comision), 0) FROM registroDeSubasta r WHERE r.cliente=c.identificador) total_pagado
+        FROM clientes c JOIN personas p ON p.identificador=c.identificador
+        WHERE c.identificador=?
+        """, "Cliente no encontrado", clienteId);
+    var history = jdbc.queryForList("""
+        SELECT s.identificador subasta_id, ca.descripcion subasta, i.identificador item_id, pu.importe, pu.ganador
+        FROM pujos pu
+        JOIN asistentes a ON a.identificador=pu.asistente
+        JOIN itemsCatalogo i ON i.identificador=pu.item
+        JOIN catalogos ca ON ca.identificador=i.catalogo
+        JOIN subastas s ON s.identificador=ca.subasta
+        WHERE a.cliente=? ORDER BY pu.identificador DESC
+        """, clienteId);
+    return Map.of("profile", base, "history", history);
+  }
+
+  @GetMapping("/notifications/{clienteId}")
+  List<Map<String, Object>> notifications(@PathVariable int clienteId) {
+    return jdbc.queryForList("SELECT * FROM mensajes WHERE cliente=? ORDER BY creado_en DESC", clienteId);
+  }
+
+  private void ensureCanParticipate(int clienteId, int subastaId, boolean requirePayment) {
+    var rows = jdbc.queryForList("""
+        SELECT c.admitido, c.categoria cliente_categoria, s.categoria subasta_categoria,
+               EXISTS(SELECT 1 FROM medios_pago m WHERE m.cliente=c.identificador AND m.verificado='si' AND m.activo='si') pago_ok
+        FROM clientes c CROSS JOIN subastas s
+        WHERE c.identificador=? AND s.identificador=?
+        """, clienteId, subastaId);
+    if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "Cliente o subasta inexistente");
+    var row = rows.get(0);
+    if (!"si".equals(row.get("admitido"))) throw new ApiException(HttpStatus.FORBIDDEN, "Cliente no admitido");
+    if (rank(row.get("cliente_categoria").toString()) < rank(row.get("subasta_categoria").toString())) {
+      throw new ApiException(HttpStatus.FORBIDDEN, "La categoría del cliente no habilita esta subasta");
+    }
+    if (requirePayment && ((Number) row.get("pago_ok")).intValue() == 0) {
+      throw new ApiException(HttpStatus.FORBIDDEN, "Se requiere al menos un medio de pago verificado");
+    }
+  }
+
+  private int ensureAssistant(int clienteId, int subastaId) {
+    jdbc.update("INSERT IGNORE INTO asistentes (numeroPostor, cliente, subasta) VALUES (?, ?, ?)", 100 + clienteId, clienteId, subastaId);
+    return jdbc.queryForObject("SELECT identificador FROM asistentes WHERE cliente=? AND subasta=?", Integer.class, clienteId, subastaId);
+  }
+
+  private Map<String, Object> one(String sql, String notFoundMessage, Object... args) {
+    var rows = jdbc.queryForList(sql, args);
+    if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, notFoundMessage);
+    return rows.get(0);
+  }
+
+  private int insertAndReturnKey(String sql, Object... args) {
+    KeyHolder key = new GeneratedKeyHolder();
+    jdbc.update(connection -> {
+      PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+      for (int i = 0; i < args.length; i++) ps.setObject(i + 1, args[i]);
+      return ps;
+    }, key);
+    return Objects.requireNonNull(key.getKey()).intValue();
+  }
+
+  private void require(String value, String message) {
+    if (value == null || value.isBlank()) throw new ApiException(HttpStatus.BAD_REQUEST, message);
+  }
+
+  private void requirePositive(BigDecimal value, String message) {
+    if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) throw new ApiException(HttpStatus.BAD_REQUEST, message);
+  }
+
+  private int rank(String category) {
+    return switch (category) {
+      case "comun" -> 1;
+      case "especial" -> 2;
+      case "plata" -> 3;
+      case "oro" -> 4;
+      case "platino" -> 5;
+      default -> 0;
+    };
+  }
+
+  public record LoginRequest(String email, String password) {}
+  public record RegisterRequest(String nombre, String apellido, String email, String password, String documento, String direccion, Integer numeroPais) {}
+  public record ClientRequest(int clienteId) {}
+  public record BidRequest(int clienteId, int itemId, BigDecimal importe) {}
+  public record PaymentRequest(int clienteId, String tipo, String moneda, String entidad, String referencia, BigDecimal montoReservado) {}
+  public record FavoriteRequest(int clienteId, int subastaId) {}
+  public record SellRequest(int duenioId, String titulo, String descripcion, String historia, List<String> fotos) {}
+}
