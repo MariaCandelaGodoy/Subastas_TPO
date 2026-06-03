@@ -8,6 +8,7 @@ export type UserSession = {
   email: string;
   domicilio?: string;
   pais?: string;
+  fotoUri?: string;
   categoria: string;
   admitido: boolean;
 };
@@ -76,7 +77,8 @@ function mapUser(payload: any): UserSession {
     apellido: names.apellido,
     email: raw.email ?? 'demo@bidvault.com',
     domicilio: raw.direccion ?? 'Domicilio declarado',
-    pais: 'Argentina',
+    pais: raw.pais ?? 'Argentina',
+    fotoUri: raw.foto_uri ?? raw.fotoUri,
     categoria: String(raw.categoria ?? 'plata').toUpperCase(),
     admitido: raw.admitido === true || raw.admitido === 'si',
   };
@@ -126,10 +128,19 @@ function mapProduct(raw: any, auction: AuctionSummary): ProductItem {
 }
 
 export const api = {
-  login: async (email: string, password: string) => mapUser(await request('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  })),
+  login: async (email: string, password: string) => {
+    if (!email.trim() || !password.trim()) throw new Error('Ingresá email y contraseña.');
+    try {
+      return mapUser(await request('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message) throw new Error(message);
+      throw new Error('El email no existe o la contraseña es incorrecta.');
+    }
+  },
   register: async (payload: Record<string, string>) => {
     const created = await request<any>('/auth/register', {
       method: 'POST',
@@ -186,8 +197,38 @@ export const api = {
   },
   selectAuctionPayment: async (payload: Record<string, unknown>) =>
     request(`/auctions/${payload.auctionId}/join`, { method: 'POST', body: JSON.stringify({ cliente_id: payload.userId }) }),
-  metrics: (userId: number) => request(`/profile/${userId}/metrics`),
-  updateProfile: async (_userId: number, payload: Record<string, string>) => mapUser({ user: { ...payload, nombre: `${payload.nombre} ${payload.apellido}`, categoria: 'plata', admitido: 'si' } }),
+  metrics: async (userId: number) => {
+    const payload = await request<any>(`/profile/${userId}/metrics`);
+    const profile = payload.profile ?? {};
+    const history = payload.history ?? [];
+    const totalOfertado = history.reduce((sum: number, item: any) => sum + Number(item.importe ?? 0), 0);
+    const byCategory = { exitoPlatino: 0, exitoOro: 0, exitoPlata: 0, exitoEspecial: 0, exitoComun: 0 };
+    return {
+      asistidas: Number(profile.subastas_asistidas ?? 0),
+      ganadas: Number(profile.subastas_ganadas ?? 0),
+      totalOfertado,
+      totalPagado: Number(profile.total_pagado ?? 0),
+      pujasRealizadas: Number(profile.pujas_realizadas ?? history.length),
+      ...byCategory,
+      exitoPlata: Number(profile.subastas_asistidas ?? 0) ? Math.round((Number(profile.subastas_ganadas ?? 0) / Number(profile.subastas_asistidas ?? 1)) * 100) : 0,
+    };
+  },
+  updateProfile: async (userId: number, payload: Record<string, string>) => {
+    const updated = await request<any>(`/profile/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        nombre: payload.nombre,
+        apellido: payload.apellido,
+        email: payload.email,
+        password: payload.password || null,
+        direccion: payload.domicilio,
+        pais: payload.pais,
+        foto_base64: payload.fotoBase64 || null,
+        foto_uri: payload.fotoUri || null,
+      }),
+    });
+    return mapUser({ token: 'demo-token', user: updated });
+  },
   notifications: (userId: number) => request(`/notifications/${userId}`),
   submitProduct: (payload: Record<string, unknown>) =>
     request('/sell-requests', {

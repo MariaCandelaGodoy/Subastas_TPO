@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { api, AuctionDetail, AuctionSummary, ProductItem, UserSession } from './src/api/client';
 import { AuctionCard } from './src/components/AuctionCard';
 import { BottomTabs, Header, RankBadge, TabKey } from './src/components/Chrome';
@@ -85,7 +86,7 @@ function SplashScreen() {
 
 function LoginScreen({ onLogin, onRegister, onGuest }: { onLogin: (user: UserSession) => void; onRegister: () => void; onGuest: () => void }) {
   const [email, setEmail] = useState('demo@bidvault.com');
-  const [password, setPassword] = useState('123456');
+  const [password, setPassword] = useState('demo123');
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
@@ -93,7 +94,7 @@ function LoginScreen({ onLogin, onRegister, onGuest }: { onLogin: (user: UserSes
     try {
       onLogin(await api.login(email, password));
     } catch (error) {
-      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos iniciar sesion.');
+      Alert.alert('No se pudo iniciar sesión', error instanceof Error ? error.message : 'El email no existe o la contraseña es incorrecta.');
     } finally {
       setLoading(false);
     }
@@ -437,7 +438,7 @@ function ProfileScreen({ session, onMetrics, onSettings }: { session: UserSessio
   return (
     <Screen style={styles.configScreen}>
       <View style={styles.profileHero}>
-        <Image source={require('./assets/user-avatar.png')} style={styles.profileHeroAvatar} />
+        <Image source={session?.fotoUri ? { uri: session.fotoUri } : require('./assets/user-avatar.png')} style={styles.profileHeroAvatar} />
         <View style={{ flex: 1 }}>
           <Text style={styles.profileHeroName}>{session ? `${session.nombre}\n${session.apellido}` : 'Invitado'}</Text>
           <Text style={styles.memberDark}>MIEMBRO DESDE 2022</Text>
@@ -631,9 +632,32 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
     password: '',
     domicilio: session.domicilio ?? 'Calle 123',
     pais: session.pais ?? 'Argentina',
+    fotoUri: session.fotoUri ?? '',
+    fotoBase64: '',
   });
   const [saving, setSaving] = useState(false);
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  const changePhoto = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permiso requerido', 'Necesitamos permiso para seleccionar una foto de perfil.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.75,
+      base64: true,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    setForm((current) => ({
+      ...current,
+      fotoUri: asset.uri,
+      fotoBase64: asset.base64 ?? '',
+    }));
+  };
   const save = async () => {
     if (!form.nombre.trim() || !form.apellido.trim() || !form.email.trim() || !form.domicilio.trim() || !form.pais.trim()) {
       Alert.alert('Campos obligatorios', 'Completá nombre, apellido, email, domicilio y país.');
@@ -655,11 +679,11 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Editar perfil" onBack={onBack} />
       <View style={styles.profilePhotoWrap}>
-        <View style={styles.profilePhoto}>
-          <Image source={require('./assets/user-avatar.png')} style={styles.profilePhotoImage} />
-        </View>
-        <View style={styles.editPhotoBadge}><Ionicons name="pencil" size={18} color={colors.white} /></View>
-        <Text style={styles.changePhoto}>CAMBIAR FOTO</Text>
+        <Pressable onPress={changePhoto} style={styles.profilePhoto}>
+          <Image source={form.fotoUri ? { uri: form.fotoUri } : require('./assets/user-avatar.png')} style={styles.profilePhotoImage} />
+        </Pressable>
+        <Pressable onPress={changePhoto} style={styles.editPhotoBadge}><Ionicons name="pencil" size={18} color={colors.white} /></Pressable>
+        <Pressable onPress={changePhoto}><Text style={styles.changePhoto}>CAMBIAR FOTO</Text></Pressable>
       </View>
       <Text style={styles.sectionTitle}>Información personal</Text>
       <View style={styles.formCard}>

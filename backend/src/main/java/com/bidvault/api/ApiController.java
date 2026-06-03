@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -41,8 +42,11 @@ public class ApiController {
         LEFT JOIN clientes c ON c.identificador = p.identificador
         WHERE u.email = ?
         """, request.email());
-    if (users.isEmpty() || !encoder.matches(request.password(), Objects.toString(users.get(0).get("password_hash")))) {
-      throw new ApiException(HttpStatus.UNAUTHORIZED, "Email o contraseña incorrectos");
+    if (users.isEmpty()) {
+      throw new ApiException(HttpStatus.NOT_FOUND, "El email no se encuentra registrado");
+    }
+    if (!encoder.matches(request.password(), Objects.toString(users.get(0).get("password_hash")))) {
+      throw new ApiException(HttpStatus.UNAUTHORIZED, "La contraseña es incorrecta");
     }
     var user = users.get(0);
     user.remove("password_hash");
@@ -271,6 +275,39 @@ public class ApiController {
     return Map.of("profile", base, "history", history);
   }
 
+  @PutMapping("/profile/{clienteId}")
+  @Transactional
+  Map<String, Object> updateProfile(@PathVariable int clienteId, @RequestBody UpdateProfileRequest request) {
+    require(request.nombre(), "El nombre es obligatorio");
+    require(request.apellido(), "El apellido es obligatorio");
+    require(request.email(), "El email es obligatorio");
+    require(request.direccion(), "El domicilio es obligatorio");
+
+    String fullName = request.nombre().trim() + " " + request.apellido().trim();
+    jdbc.update("UPDATE personas SET nombre=?, direccion=? WHERE identificador=?", fullName, request.direccion().trim(), clienteId);
+    jdbc.update("UPDATE usuarios_app SET email=? WHERE persona=?", request.email().trim().toLowerCase(), clienteId);
+    if (request.password() != null && !request.password().isBlank()) {
+      jdbc.update("UPDATE usuarios_app SET password_hash=?, password_temporal='no' WHERE persona=?",
+          encoder.encode(request.password()), clienteId);
+    }
+    if (request.fotoBase64() != null && !request.fotoBase64().isBlank()) {
+      String clean = request.fotoBase64().contains(",")
+          ? request.fotoBase64().substring(request.fotoBase64().indexOf(',') + 1)
+          : request.fotoBase64();
+      jdbc.update("UPDATE personas SET foto=? WHERE identificador=?", Base64.getDecoder().decode(clean), clienteId);
+    }
+    var updated = one("""
+        SELECT p.identificador persona_id, p.nombre, p.direccion, u.email,
+               c.categoria, c.admitido,
+               CASE WHEN p.foto IS NULL THEN NULL ELSE CONCAT('data:image/jpeg;base64,', TO_BASE64(p.foto)) END foto_uri
+        FROM personas p
+        JOIN usuarios_app u ON u.persona = p.identificador
+        LEFT JOIN clientes c ON c.identificador = p.identificador
+        WHERE p.identificador=?
+        """, "Cliente no encontrado", clienteId);
+    return updated;
+  }
+
   @GetMapping("/notifications/{clienteId}")
   List<Map<String, Object>> notifications(@PathVariable int clienteId) {
     return jdbc.queryForList("SELECT * FROM mensajes WHERE cliente=? ORDER BY creado_en DESC", clienteId);
@@ -341,4 +378,5 @@ public class ApiController {
   public record PaymentRequest(int clienteId, String tipo, String moneda, String entidad, String referencia, BigDecimal montoReservado) {}
   public record FavoriteRequest(int clienteId, int subastaId) {}
   public record SellRequest(int duenioId, String titulo, String descripcion, String historia, List<String> fotos) {}
+  public record UpdateProfileRequest(String nombre, String apellido, String email, String password, String direccion, String pais, String fotoBase64, String fotoUri) {}
 }
