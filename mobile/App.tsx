@@ -434,9 +434,16 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
   const [items, setItems] = useState<any[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   useEffect(() => { api.payments(session.userId).then((data: any) => setItems(data)); }, [session.userId]);
-  const verified = items.filter((item) => item.estado === 'VERIFICADO');
+  const verifiedItems = items.filter((item) => item.estado === 'VERIFICADO');
+  const selectPayment = (item: any) => {
+    if (item.estado !== 'VERIFICADO') {
+      Alert.alert('Pendiente de verificacion', 'Este medio todavia no fue verificado. No se puede usar como garantia para entrar a la subasta.');
+      return;
+    }
+    setSelected(item.id);
+  };
   const accept = async () => {
-    if (!selected) return Alert.alert('Metodo requerido', 'Selecciona un medio verificado para entrar.');
+    if (!selected) return Alert.alert('Metodo requerido', 'Selecciona un medio verificado para dejar constancia de capacidad de pago.');
     try {
       await api.selectAuctionPayment({ userId: session.userId, auctionId, paymentMethodId: selected });
       onDone();
@@ -447,26 +454,28 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
   return (
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Metodos de pago" onBack={onBack} />
-      <Text style={styles.paymentIntro}>Seleccione su metodo de pago</Text>
+      <Text style={styles.paymentIntro}>Seleccione un medio verificado como garantia de ingreso. No se va a cobrar ahora; si ganas, vas a elegir con que pagar desde la notificacion.</Text>
       <Text style={styles.sectionTitle}>Tarjetas</Text>
-      {items.filter((i) => String(i.tipo).includes('TARJETA')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => item.estado === 'VERIFICADO' && setSelected(item.id)} />)}
+      {items.filter((i) => String(i.tipo).includes('TARJETA')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => selectPayment(item)} />)}
       <Text style={styles.sectionTitle}>Cheques</Text>
-      {items.filter((i) => String(i.tipo).includes('CHEQUE')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => item.estado === 'VERIFICADO' && setSelected(item.id)} />)}
-      {verified.length === 0 ? <Text style={styles.emptyText}>No tenes medios verificados disponibles.</Text> : null}
-      <PrimaryButton label="Aceptar" onPress={accept} />
+      {items.filter((i) => String(i.tipo).includes('CHEQUE')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => selectPayment(item)} />)}
+      {items.length === 0 ? <Text style={styles.emptyText}>No tenes medios cargados. Agrega una tarjeta o cheque desde configuracion.</Text> : null}
+      {items.length > 0 && verifiedItems.length === 0 ? <Text style={styles.emptyText}>Tus medios estan pendientes de verificacion. Necesitas uno verificado para entrar.</Text> : null}
+      <PrimaryButton label="Aceptar" onPress={accept} disabled={!selected} />
     </Screen>
   );
 }
 
 function SelectablePayment({ item, selected, onPress }: { item: any; selected: boolean; onPress: () => void }) {
+  const verified = item.estado === 'VERIFICADO';
   return (
-    <Pressable onPress={onPress} style={[styles.paymentSelectCard, item.estado !== 'VERIFICADO' && { opacity: 0.65 }]}>
+    <Pressable onPress={onPress} style={[styles.paymentSelectCard, !verified && styles.paymentSelectDisabled]}>
       <View style={{ flex: 1 }}>
         <Text style={styles.paymentBrand}>{item.etiqueta}</Text>
         <Text style={styles.description}>.... .... .... {item.ultimosDigitos}</Text>
-        <Text style={styles.verified}>{item.estado} {item.internacional ? 'INTERNACIONAL' : 'NACIONAL'}</Text>
+        <Text style={[styles.verified, !verified && styles.pendingText]}>{item.estado} {item.internacional ? 'INTERNACIONAL' : 'NACIONAL'}</Text>
       </View>
-      <View style={[styles.checkBox, selected && styles.checkBoxSelected]} />
+      <View style={[styles.checkBox, selected && styles.checkBoxSelected, !verified && styles.checkBoxDisabled]} />
     </Pressable>
   );
 }
@@ -1211,10 +1220,13 @@ const styles = StyleSheet.create({
   paymentCard: { backgroundColor: colors.white, borderRadius: 8, padding: 16, marginBottom: 12, borderColor: colors.linen, borderWidth: 1 },
   paymentIntro: { color: colors.ink, fontSize: 18, fontWeight: '700', marginBottom: 22 },
   paymentSelectCard: { backgroundColor: colors.white, borderRadius: 6, padding: 14, marginBottom: 14, flexDirection: 'row', alignItems: 'center', gap: 12, ...shadow },
+  paymentSelectDisabled: { opacity: 0.55 },
   checkBox: { width: 18, height: 18, borderWidth: 2, borderColor: colors.burgundy, borderRadius: 2 },
   checkBoxSelected: { backgroundColor: colors.burgundy },
+  checkBoxDisabled: { borderColor: colors.muted },
   paymentBrand: { color: colors.burgundy, fontSize: 22, fontWeight: '900' },
   verified: { color: colors.success, fontWeight: '900', marginTop: 8 },
+  pendingText: { color: colors.muted },
   rejectedText: { color: colors.danger },
   emptyText: { color: colors.muted, textAlign: 'center', marginTop: 18, fontWeight: '700' },
   notification: { backgroundColor: colors.white, borderRadius: 8, padding: 16, marginBottom: 12, borderLeftColor: colors.burgundy, borderLeftWidth: 4 },

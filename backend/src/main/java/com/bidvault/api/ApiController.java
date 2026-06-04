@@ -154,13 +154,24 @@ public class ApiController {
 
   @PostMapping("/auctions/{id}/join")
   @Transactional
-  Map<String, Object> joinAuction(@PathVariable int id, @RequestBody ClientRequest request) {
+  Map<String, Object> joinAuction(@PathVariable int id, @RequestBody JoinAuctionRequest request) {
     ensureCanParticipate(request.clienteId(), id, false);
+    var payment = one("""
+        SELECT identificador, verificado
+        FROM medios_pago
+        WHERE identificador=? AND cliente=? AND activo='si' AND verificado='si'
+        """, "El medio de pago debe estar verificado para ingresar a la subasta", request.medioPagoId(), request.clienteId());
+    ensureAuctionGuaranteeTable();
+    jdbc.update("""
+        INSERT INTO garantias_subasta (cliente, subasta, medio_pago, estado_verificacion)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE medio_pago=VALUES(medio_pago), estado_verificacion=VALUES(estado_verificacion), creado_en=CURRENT_TIMESTAMP
+        """, request.clienteId(), id, request.medioPagoId(), payment.get("verificado"));
     jdbc.update("UPDATE sesiones_subasta SET activa='no' WHERE cliente=? AND activa='si'", request.clienteId());
     int postor = 100 + request.clienteId();
     jdbc.update("INSERT IGNORE INTO asistentes (numeroPostor, cliente, subasta) VALUES (?, ?, ?)", postor, request.clienteId(), id);
     int sessionId = insertAndReturnKey("INSERT INTO sesiones_subasta (cliente, subasta, activa) VALUES (?, ?, 'si')", request.clienteId(), id);
-    return Map.of("sesion_id", sessionId, "numero_postor", postor);
+    return Map.of("sesion_id", sessionId, "numero_postor", postor, "medio_pago_id", request.medioPagoId(), "garantia", true);
   }
 
   @PostMapping("/bids")
@@ -179,7 +190,8 @@ public class ApiController {
         FOR UPDATE
         """, "Ítem no encontrado", request.itemId());
     int subastaId = ((Number) data.get("subasta")).intValue();
-    ensureCanParticipate(request.clienteId(), subastaId, true);
+    ensureCanParticipate(request.clienteId(), subastaId, false);
+    ensureAuctionGuarantee(request.clienteId(), subastaId);
     BigDecimal base = (BigDecimal) data.get("precioBase");
     BigDecimal current = (BigDecimal) data.get("mejor_oferta");
     BigDecimal amount = request.importe().setScale(2, RoundingMode.HALF_UP);
@@ -468,6 +480,18 @@ public class ApiController {
     return jdbc.queryForObject("SELECT identificador FROM asistentes WHERE cliente=? AND subasta=?", Integer.class, clienteId, subastaId);
   }
 
+  private void ensureAuctionGuarantee(int clienteId, int subastaId) {
+    ensureAuctionGuaranteeTable();
+    var rows = jdbc.queryForList("""
+        SELECT identificador
+        FROM garantias_subasta
+        WHERE cliente=? AND subasta=?
+        """, clienteId, subastaId);
+    if (rows.isEmpty()) {
+      throw new ApiException(HttpStatus.FORBIDDEN, "Debe seleccionar un medio de garantia para participar");
+    }
+  }
+
   private Map<String, Object> one(String sql, String notFoundMessage, Object... args) {
     var rows = jdbc.queryForList(sql, args);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, notFoundMessage);
@@ -521,6 +545,25 @@ public class ApiController {
         """);
   }
 
+  private void ensureAuctionGuaranteeTable() {
+    jdbc.execute("""
+        CREATE TABLE IF NOT EXISTS garantias_subasta (
+          identificador INT NOT NULL AUTO_INCREMENT,
+          cliente INT NOT NULL,
+          subasta INT NOT NULL,
+          medio_pago INT NOT NULL,
+          estado_verificacion VARCHAR(2) NOT NULL DEFAULT 'no',
+          creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT pk_garantias_subasta PRIMARY KEY (identificador),
+          CONSTRAINT uq_garantia_cliente_subasta UNIQUE (cliente, subasta),
+          CONSTRAINT chk_garantia_verificacion CHECK (estado_verificacion IN ('si','no')),
+          CONSTRAINT fk_garantias_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador),
+          CONSTRAINT fk_garantias_subasta FOREIGN KEY (subasta) REFERENCES subastas(identificador),
+          CONSTRAINT fk_garantias_medio_pago FOREIGN KEY (medio_pago) REFERENCES medios_pago(identificador)
+        )
+        """);
+  }
+
   private String blankDefault(String value, String defaultValue) {
     return value == null || value.isBlank() ? defaultValue : value;
   }
@@ -528,6 +571,7 @@ public class ApiController {
   public record LoginRequest(String email, String password) {}
   public record RegisterRequest(String nombre, String apellido, String email, String password, String documento, String direccion, Integer numeroPais) {}
   public record ClientRequest(int clienteId) {}
+  public record JoinAuctionRequest(int clienteId, int medioPagoId) {}
   public record BidRequest(int clienteId, int itemId, BigDecimal importe) {}
   public record PaymentRequest(int clienteId, String tipo, String moneda, String entidad, String referencia, BigDecimal montoReservado) {}
   public record FavoriteRequest(int clienteId, int subastaId) {}

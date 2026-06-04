@@ -203,7 +203,10 @@ export const api = {
     return { id: created.medio_pago_id, ...payload, estado: 'PENDIENTE' };
   },
   selectAuctionPayment: async (payload: Record<string, unknown>) =>
-    request(`/auctions/${payload.auctionId}/join`, { method: 'POST', body: JSON.stringify({ cliente_id: payload.userId }) }),
+    request(`/auctions/${payload.auctionId}/join`, {
+      method: 'POST',
+      body: JSON.stringify({ cliente_id: payload.userId, medio_pago_id: payload.paymentMethodId }),
+    }),
   metrics: async (userId: number) => {
     const payload = await request<any>(`/profile/${userId}/metrics`);
     const profile = payload.profile ?? {};
