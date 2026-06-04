@@ -1,26 +1,22 @@
 import React from 'react';
-import { ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuctionSummary } from '../api/client';
 import { RankBadge } from './Chrome';
 import { colors, shadow } from '../theme/theme';
 
-const images: Record<string, string> = {
-  Joyeria: 'https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?q=80&w=900',
-  Instrumentos: 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?q=80&w=900',
-  Automotores: 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=900',
-};
-
 export function AuctionCard({ auction, onPress, registered }: { auction: AuctionSummary; onPress: () => void; registered: boolean }) {
-  const image = Object.entries(images).find(([key]) => auction.titulo.includes(key))?.[1] ?? images.Joyeria;
   return (
     <Pressable onPress={onPress} style={styles.card}>
-      <ImageBackground source={{ uri: image }} imageStyle={styles.image} style={styles.media}>
+      <View style={styles.media}>
+        {auction.imagenPortada ? <Image source={{ uri: auction.imagenPortada }} style={styles.cover} /> : null}
+        <View style={styles.mediaOverlay} />
         <View style={styles.pillRow}>
           <Text style={styles.live}>{auction.estado === 'EN_VIVO' ? 'EN VIVO' : 'PROGRAMADA'}</Text>
           <RankBadge category={auction.categoria} />
         </View>
-      </ImageBackground>
+        <Text style={styles.mediaTitle}>{auction.productoDestacado}</Text>
+      </View>
       <View style={styles.body}>
         <View style={styles.titleRow}>
           <Text style={styles.title}>{auction.titulo}</Text>
@@ -50,13 +46,21 @@ const styles = StyleSheet.create({
     height: 160,
     justifyContent: 'space-between',
     padding: 12,
+    backgroundColor: colors.ink,
   },
-  image: {
-    opacity: 0.88,
+  cover: {
+    ...StyleSheet.absoluteFillObject,
+    width: '100%',
+    height: '100%',
+  },
+  mediaOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(32, 27, 23, 0.42)',
   },
   pillRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    zIndex: 1,
   },
   live: {
     backgroundColor: colors.burgundy,
@@ -73,6 +77,13 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     fontSize: 12,
     fontWeight: '900',
+  },
+  mediaTitle: {
+    color: colors.cream,
+    fontSize: 24,
+    fontWeight: '900',
+    marginTop: 'auto',
+    zIndex: 1,
   },
   body: {
     padding: 14,

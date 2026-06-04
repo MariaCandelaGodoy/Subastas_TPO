@@ -8,6 +8,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -90,15 +91,16 @@ public class ApiController {
                                       @RequestParam(required = false) String q) {
     String sql = """
         SELECT s.identificador id, c.descripcion titulo, s.fecha, s.hora, s.estado, s.categoria,
-               s.ubicacion, MIN(i.precioBase) precio_desde,
+               s.ubicacion, MIN(i.precioBase) precio_desde, sp.imagen imagen_portada,
                CASE WHEN s.categoria IN ('oro','platino') THEN 'USD' ELSE 'ARS' END moneda,
                COUNT(i.identificador) piezas,
                EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta = s.identificador AND f.cliente = COALESCE(?, -1)) favorito
         FROM subastas s
         JOIN catalogos c ON c.subasta = s.identificador
         JOIN itemsCatalogo i ON i.catalogo = c.identificador
+        LEFT JOIN subastas_portadas sp ON sp.subasta = s.identificador
         WHERE (? IS NULL OR c.descripcion LIKE CONCAT('%', ?, '%'))
-        GROUP BY s.identificador, c.descripcion, s.fecha, s.hora, s.estado, s.categoria, s.ubicacion
+        GROUP BY s.identificador, c.descripcion, s.fecha, s.hora, s.estado, s.categoria, s.ubicacion, sp.imagen
         ORDER BY s.fecha, s.hora
         """;
     return jdbc.queryForList(sql, clienteId, q, q);
@@ -109,9 +111,11 @@ public class ApiController {
     var rows = jdbc.queryForList("""
         SELECT s.identificador id, c.identificador catalogo_id, c.descripcion titulo, s.fecha, s.hora,
                s.estado, s.categoria, s.ubicacion, s.capacidadAsistentes, s.tieneDeposito, s.seguridadPropia,
+               sp.imagen imagen_portada,
                p.nombre subastador, EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta=s.identificador AND f.cliente=COALESCE(?, -1)) favorito
         FROM subastas s
         JOIN catalogos c ON c.subasta = s.identificador
+        LEFT JOIN subastas_portadas sp ON sp.subasta = s.identificador
         LEFT JOIN personas p ON p.identificador = s.subastador
         WHERE s.identificador = ?
         """, clienteId, id);
@@ -129,6 +133,23 @@ public class ApiController {
         GROUP BY i.identificador, pr.identificador, pr.descripcionCatalogo, pr.descripcionCompleta, pr.disponible, i.precioBase, i.comision, i.subastado
         """, rows.get(0).get("catalogo_id"));
     return Map.of("auction", rows.get(0), "items", items);
+  }
+
+  @PutMapping("/auctions/{id}/cover")
+  @Transactional
+  Map<String, Object> updateAuctionCover(@PathVariable int id, @RequestBody AuctionCoverRequest request) {
+    require(request.imagen(), "La imagen de portada es obligatoria");
+    one("SELECT identificador FROM subastas WHERE identificador=?", "Subasta no encontrada", id);
+    jdbc.update("""
+        INSERT INTO subastas_portadas (subasta, imagen, mime_type, descripcion)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE imagen=VALUES(imagen), mime_type=VALUES(mime_type), descripcion=VALUES(descripcion)
+        """, id, request.imagen(), blankDefault(request.mimeType(), "image/jpeg"), request.descripcion());
+    return one("""
+        SELECT subasta, imagen imagen_portada, mime_type, descripcion
+        FROM subastas_portadas
+        WHERE subasta=?
+        """, "Portada no encontrada", id);
   }
 
   @PostMapping("/auctions/{id}/join")
@@ -313,6 +334,117 @@ public class ApiController {
     return jdbc.queryForList("SELECT * FROM mensajes WHERE cliente=? ORDER BY creado_en DESC", clienteId);
   }
 
+  @GetMapping("/shipping/addresses")
+  List<Map<String, Object>> addresses(@RequestParam int userId) {
+    ensureAddressTable();
+    return jdbc.queryForList("""
+        SELECT identificador id, titulo, direccion, ciudad, pais, predeterminada, creado_en
+        FROM direcciones_entrega
+        WHERE cliente=?
+        ORDER BY predeterminada DESC, identificador DESC
+        """, userId);
+  }
+
+  @GetMapping("/shipping/shipments")
+  List<Map<String, Object>> shipments(@RequestParam int userId) {
+    return jdbc.queryForList("""
+        SELECT e.identificador id, e.estado, e.costo, e.codigo_seguimiento tracking,
+               e.direccion, r.identificador registro_id, r.importe, r.comision,
+               p.identificador producto_id, p.descripcionCatalogo producto, p.descripcionCompleta descripcion
+        FROM envios e
+        JOIN registroDeSubasta r ON r.identificador = e.registro
+        JOIN productos p ON p.identificador = r.producto
+        WHERE r.cliente=?
+        ORDER BY e.identificador DESC
+        """, userId);
+  }
+
+  @PostMapping("/shipping/shipments")
+  @Transactional
+  Map<String, Object> createShipment(@RequestBody ShipmentRequest request) {
+    ensureAddressTable();
+    var address = one("""
+        SELECT direccion, ciudad, pais
+        FROM direcciones_entrega
+        WHERE identificador=? AND cliente=?
+        """, "Dirección no encontrada", request.addressId(), request.userId());
+    var pending = jdbc.queryForList("""
+        SELECT r.identificador
+        FROM registroDeSubasta r
+        WHERE r.cliente=?
+          AND NOT EXISTS (SELECT 1 FROM envios e WHERE e.registro=r.identificador)
+        ORDER BY r.identificador DESC
+        LIMIT 1
+        """, request.userId());
+    if (pending.isEmpty()) {
+      throw new ApiException(HttpStatus.NOT_FOUND, "No hay compras pendientes de envío");
+    }
+    String fullAddress = address.get("direccion") + ", " + address.get("ciudad") + ", " + address.get("pais");
+    String tracking = "BV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    int id = insertAndReturnKey("""
+        INSERT INTO envios (registro, direccion, estado, costo, codigo_seguimiento)
+        VALUES (?, ?, 'pendiente', 0, ?)
+        """, pending.get(0).get("identificador"), fullAddress, tracking);
+    return one("""
+        SELECT e.identificador id, e.estado, e.costo, e.codigo_seguimiento tracking,
+               e.direccion, r.identificador registro_id, p.descripcionCatalogo producto, p.descripcionCompleta descripcion
+        FROM envios e
+        JOIN registroDeSubasta r ON r.identificador=e.registro
+        JOIN productos p ON p.identificador=r.producto
+        WHERE e.identificador=?
+        """, "Envío no encontrado", id);
+  }
+
+  @PostMapping("/shipping/addresses")
+  @Transactional
+  Map<String, Object> addAddress(@RequestBody AddressRequest request) {
+    ensureAddressTable();
+    require(request.titulo(), "El título de la dirección es obligatorio");
+    require(request.direccion(), "La dirección es obligatoria");
+    if ("si".equals(request.predeterminada())) {
+      jdbc.update("UPDATE direcciones_entrega SET predeterminada='no' WHERE cliente=?", request.userId());
+    }
+    int id = insertAndReturnKey("""
+        INSERT INTO direcciones_entrega (cliente, titulo, direccion, ciudad, pais, predeterminada)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, request.userId(), request.titulo(), request.direccion(),
+        blankDefault(request.ciudad(), "Buenos Aires"), blankDefault(request.pais(), "Argentina"),
+        blankDefault(request.predeterminada(), "si"));
+    return one("SELECT identificador id, titulo, direccion, ciudad, pais, predeterminada FROM direcciones_entrega WHERE identificador=?",
+        "Dirección no encontrada", id);
+  }
+
+  @PutMapping("/shipping/addresses/{id}")
+  @Transactional
+  Map<String, Object> updateAddress(@PathVariable int id, @RequestBody AddressRequest request) {
+    ensureAddressTable();
+    require(request.titulo(), "El título de la dirección es obligatorio");
+    require(request.direccion(), "La dirección es obligatoria");
+    if ("si".equals(request.predeterminada())) {
+      jdbc.update("UPDATE direcciones_entrega SET predeterminada='no' WHERE cliente=?", request.userId());
+    }
+    jdbc.update("""
+        UPDATE direcciones_entrega
+        SET titulo=?, direccion=?, ciudad=?, pais=?, predeterminada=?
+        WHERE identificador=? AND cliente=?
+        """, request.titulo(), request.direccion(), blankDefault(request.ciudad(), "Buenos Aires"),
+        blankDefault(request.pais(), "Argentina"), blankDefault(request.predeterminada(), "no"), id, request.userId());
+    return one("SELECT identificador id, titulo, direccion, ciudad, pais, predeterminada FROM direcciones_entrega WHERE identificador=?",
+        "Dirección no encontrada", id);
+  }
+
+  @GetMapping("/my-pieces/{duenioId}")
+  List<Map<String, Object>> myPieces(@PathVariable int duenioId) {
+    return jdbc.queryForList("""
+        SELECT sp.identificador id, sp.titulo, sp.descripcion, sp.estado, sp.motivo_rechazo,
+               sp.deposito, sp.seguro, sp.creado_en,
+               (SELECT sf.url FROM solicitudes_fotos sf WHERE sf.solicitud=sp.identificador LIMIT 1) foto
+        FROM solicitudes_productos sp
+        WHERE sp.duenio=?
+        ORDER BY sp.creado_en DESC
+        """, duenioId);
+  }
+
   private void ensureCanParticipate(int clienteId, int subastaId, boolean requirePayment) {
     var rows = jdbc.queryForList("""
         SELECT c.admitido, c.categoria cliente_categoria, s.categoria subasta_categoria,
@@ -371,6 +503,28 @@ public class ApiController {
     };
   }
 
+  private void ensureAddressTable() {
+    jdbc.execute("""
+        CREATE TABLE IF NOT EXISTS direcciones_entrega (
+          identificador INT NOT NULL AUTO_INCREMENT,
+          cliente INT NOT NULL,
+          titulo VARCHAR(120) NOT NULL,
+          direccion VARCHAR(250) NOT NULL,
+          ciudad VARCHAR(120) NOT NULL,
+          pais VARCHAR(120) NOT NULL,
+          predeterminada VARCHAR(2) NOT NULL DEFAULT 'no',
+          creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT pk_direcciones_entrega PRIMARY KEY (identificador),
+          CONSTRAINT chk_dir_pred CHECK (predeterminada IN ('si','no')),
+          CONSTRAINT fk_direcciones_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador)
+        )
+        """);
+  }
+
+  private String blankDefault(String value, String defaultValue) {
+    return value == null || value.isBlank() ? defaultValue : value;
+  }
+
   public record LoginRequest(String email, String password) {}
   public record RegisterRequest(String nombre, String apellido, String email, String password, String documento, String direccion, Integer numeroPais) {}
   public record ClientRequest(int clienteId) {}
@@ -379,4 +533,7 @@ public class ApiController {
   public record FavoriteRequest(int clienteId, int subastaId) {}
   public record SellRequest(int duenioId, String titulo, String descripcion, String historia, List<String> fotos) {}
   public record UpdateProfileRequest(String nombre, String apellido, String email, String password, String direccion, String pais, String fotoBase64, String fotoUri) {}
+  public record AddressRequest(int userId, String titulo, String direccion, String ciudad, String pais, String predeterminada) {}
+  public record ShipmentRequest(int userId, int addressId) {}
+  public record AuctionCoverRequest(String imagen, String mimeType, String descripcion) {}
 }

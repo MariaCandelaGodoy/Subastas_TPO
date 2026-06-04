@@ -1,17 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { api, AuctionDetail, AuctionSummary, ProductItem, UserSession } from './src/api/client';
 import { AuctionCard } from './src/components/AuctionCard';
 import { BottomTabs, Header, RankBadge, TabKey } from './src/components/Chrome';
 import { Screen } from './src/components/Screen';
 import { colors, shadow } from './src/theme/theme';
 
-type Route = 'splash' | 'login' | 'register' | 'app' | 'auction' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'shipmentDetail' | 'myPieces' | 'metrics';
+type Route = 'splash' | 'login' | 'register' | 'terms' | 'app' | 'auction' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'shipmentDetail' | 'myPieces' | 'metrics';
 type AuctionFilter = 'EN_VIVO' | 'FAVORITAS' | 'PROGRAMADA';
 
 export default function App() {
+  return (
+    <AppErrorBoundary>
+      <BidVaultApp />
+    </AppErrorBoundary>
+  );
+}
+
+function BidVaultApp() {
   const [route, setRoute] = useState<Route>('splash');
   const [tab, setTab] = useState<TabKey>('home');
   const [session, setSession] = useState<UserSession | null>(null);
@@ -39,19 +46,20 @@ export default function App() {
   };
 
   if (route === 'splash') return <SplashScreen />;
-  if (route === 'login') return <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} />;
+  if (route === 'login') return <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'terms') return <TermsScreen onBack={() => setRoute('login')} />;
   if (route === 'register') return <RegisterScreen onDone={openApp} onBack={() => setRoute('login')} />;
   if (route === 'auction' && selectedAuction) {
     return <AuctionLiveScreen auctionId={selectedAuction} session={session} onBack={() => setRoute('app')} onPayments={() => { setPaymentBackRoute('auction'); setRoute('payments'); }} />;
   }
-  if (route === 'selectPayment' && selectedAuction) return session ? <SelectPaymentScreen session={session} auctionId={selectedAuction} onBack={() => setRoute('app')} onDone={() => setRoute('auction')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} />;
+  if (route === 'selectPayment' && selectedAuction) return session ? <SelectPaymentScreen session={session} auctionId={selectedAuction} onBack={() => setRoute('app')} onDone={() => setRoute('auction')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'payments') return <PaymentsScreen session={session} onBack={() => setRoute(paymentBackRoute)} />;
-  if (route === 'editProfile') return session ? <EditProfileScreen session={session} onBack={() => setRoute('settings')} onSaved={(updated) => setSession({ ...session, ...updated, token: session.token })} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} />;
-  if (route === 'shipping') return session ? <ShippingScreen onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} />;
-  if (route === 'coordinateShipping') return session ? <CoordinateShippingScreen session={session} onBack={() => setRoute('app')} onDone={(shipment) => { setSelectedShipment(shipment); setRoute('shipmentDetail'); }} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} />;
-  if (route === 'shipmentDetail') return session ? <ShipmentDetailScreen session={session} shipment={selectedShipment} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} />;
-  if (route === 'myPieces') return session ? <MyPiecesScreen onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} />;
-  if (route === 'metrics') return session ? <MetricsScreen session={session} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} />;
+  if (route === 'editProfile') return session ? <EditProfileScreen session={session} onBack={() => setRoute('settings')} onSaved={(updated) => setSession({ ...session, ...updated, token: session.token })} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'shipping') return session ? <ShippingScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'coordinateShipping') return session ? <CoordinateShippingScreen session={session} onBack={() => setRoute('app')} onDone={(shipment) => { setSelectedShipment(shipment); setRoute('shipmentDetail'); }} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'shipmentDetail') return session ? <ShipmentDetailScreen session={session} shipment={selectedShipment} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'myPieces') return session ? <MyPiecesScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'metrics') return session ? <MetricsScreen session={session} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'settings') {
     return (
       <SettingsScreen
@@ -76,6 +84,26 @@ export default function App() {
   );
 }
 
+class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { error?: Error }> {
+  state: { error?: Error } = {};
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={styles.errorScreen}>
+          <Text style={styles.errorTitle}>Error</Text>
+          <Text style={styles.errorText}>{this.state.error.message}</Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function SplashScreen() {
   return (
     <View style={styles.splash}>
@@ -84,9 +112,9 @@ function SplashScreen() {
   );
 }
 
-function LoginScreen({ onLogin, onRegister, onGuest }: { onLogin: (user: UserSession) => void; onRegister: () => void; onGuest: () => void }) {
-  const [email, setEmail] = useState('demo@bidvault.com');
-  const [password, setPassword] = useState('demo123');
+function LoginScreen({ onLogin, onRegister, onGuest, onTerms }: { onLogin: (user: UserSession) => void; onRegister: () => void; onGuest: () => void; onTerms: () => void }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
@@ -112,13 +140,13 @@ function LoginScreen({ onLogin, onRegister, onGuest }: { onLogin: (user: UserSes
       <PrimaryButton label={loading ? 'Ingresando...' : 'Iniciar sesion'} onPress={submit} disabled={loading} />
       <Pressable onPress={onRegister}><Text style={styles.link}>No tenes cuenta? Registrate</Text></Pressable>
       <Pressable onPress={onGuest}><Text style={styles.secondaryLink}>Iniciar sesion mas tarde</Text></Pressable>
-      <Text style={styles.terms}>Al continuar aceptas nuestros Terminos y Condiciones</Text>
+      <Pressable onPress={onTerms}><Text style={styles.terms}>Al continuar aceptas nuestros Terminos y Condiciones</Text></Pressable>
     </Screen>
   );
 }
 
 function RegisterScreen({ onDone, onBack }: { onDone: (user: UserSession) => void; onBack: () => void }) {
-  const [form, setForm] = useState({ nombre: '', apellido: '', email: '', password: 'temporal123', domicilio: '', pais: '' });
+  const [form, setForm] = useState({ nombre: '', apellido: '', documento: '', email: '', password: '', domicilio: '', pais: '' });
   const [loading, setLoading] = useState(false);
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -126,7 +154,7 @@ function RegisterScreen({ onDone, onBack }: { onDone: (user: UserSession) => voi
     setLoading(true);
     try {
       const user = await api.register(form);
-      Alert.alert('Registrado', 'Su registro fue exitoso. La validacion quedo simulada como aprobada para el TPO.');
+      Alert.alert('Registrado', 'Su registro fue exitoso. La validación quedó pendiente de aprobación.');
       onDone(user);
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'Revisa los campos obligatorios.');
@@ -141,13 +169,60 @@ function RegisterScreen({ onDone, onBack }: { onDone: (user: UserSession) => voi
       <Text style={styles.largeTitle}>Registro</Text>
       <Field label="Nombre *" value={form.nombre} onChangeText={(value: string) => update('nombre', value)} />
       <Field label="Apellido *" value={form.apellido} onChangeText={(value: string) => update('apellido', value)} />
+      <Field label="Documento *" value={form.documento} onChangeText={(value: string) => update('documento', value)} keyboardType="numeric" />
       <Field label="Email *" value={form.email} onChangeText={(value: string) => update('email', value)} autoCapitalize="none" />
+      <Field label="Contraseña *" value={form.password} onChangeText={(value: string) => update('password', value)} secureTextEntry />
       <Field label="Domicilio *" value={form.domicilio} onChangeText={(value: string) => update('domicilio', value)} />
       <Field label="Pais *" value={form.pais} onChangeText={(value: string) => update('pais', value)} />
       <View style={styles.photoBox}><Ionicons name="camera-outline" size={26} color={colors.burgundy} /><Text style={styles.photoText}>Foto frente y dorso del DNI</Text></View>
       <PrimaryButton label={loading ? 'Enviando...' : 'Aceptar'} onPress={submit} disabled={loading} />
     </Screen>
   );
+}
+
+function TermsScreen({ onBack }: { onBack: () => void }) {
+  return (
+    <Screen style={styles.termsScreen}>
+      <View style={styles.termsHeader}>
+        <Pressable onPress={onBack} hitSlop={12}><Ionicons name="arrow-back" size={28} color={colors.burgundy} /></Pressable>
+        <Text style={styles.termsTitle}>Términos y Condiciones</Text>
+      </View>
+      <TermsSection number="01" title="Servicio de Exclusividad">
+        <TermsCard>El acceso a las salas de puja está reservado exclusivamente para miembros verificados que han completado el proceso de verificación de perfil, asegurando un entorno de inversión seguro y sofisticado</TermsCard>
+      </TermsSection>
+      <TermsSection number="02" title="Reglas de puja">
+        <TermsCard>Para mantener la fluidez y el valor justo del mercado, las pujas están sujetas a un escalonamiento matemático obligatorio:</TermsCard>
+        <View style={styles.incrementBox}><Text style={styles.incrementLabel}>Incremento{"\n"}Mínimo</Text><Text style={styles.incrementValue}>1%{"\n"}<Text style={styles.incrementSmall}>del valor base</Text></Text></View>
+        <View style={styles.incrementBox}><Text style={styles.incrementLabel}>Incremento{"\n"}Máximo</Text><Text style={styles.incrementValue}>20%{"\n"}<Text style={styles.incrementSmall}>por movimiento</Text></Text></View>
+        <View style={styles.warningBox}><Ionicons name="alert-circle-outline" size={34} color={colors.burgundy} /><Text style={styles.warningText}>Las categorías <Text style={styles.bold}>Oro y Platino</Text> no están sujetas a incrementos máximos</Text></View>
+      </TermsSection>
+      <TermsSection number="03" title="Incumplimientos legales">
+        <TermsCard>La falta de fondos al cierre de una subasta ganada resultará en una multa automática del 10% del valor final.{"\n\n"}BidVault se reserva el derecho de derivar el caso a la justicia y reportar el incumplimiento a centrales de riesgo crediticio internacionales, revocando permanentemente la membresía del usuario</TermsCard>
+      </TermsSection>
+      <TermsSection number="04" title="Seguros y Logística">
+        <TermsCard>La logística de traslado corre por cuenta y orden del comprador a través de nuestros transportistas certificados</TermsCard>
+        <View style={styles.warningBox}><Ionicons name="alert-circle-outline" size={34} color={colors.burgundy} /><Text style={styles.warningTextItalic}>El seguro especializado de tránsito se extingue automáticamente en el momento en que el comprador o un tercero no autorizado retira la pieza personalmente de nuestras bóvedas</Text></View>
+      </TermsSection>
+      <View style={styles.conformityCard}>
+        <Text style={styles.conformityTitle}>Declaración de{"\n"}conformidad</Text>
+        <Text style={styles.conformityText}>Al aceptar, usted declara haber leído, comprendido y aceptado la totalidad de las cláusulas aquí expuestas</Text>
+        <PrimaryButton label="Aceptar" onPress={onBack} />
+      </View>
+    </Screen>
+  );
+}
+
+function TermsSection({ number, title, children }: { number: string; title: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.termsSection}>
+      <View style={styles.termsSectionHeader}><Text style={styles.termsNumber}>{number}</Text><Text style={styles.termsSectionTitle}>{title}</Text></View>
+      {children}
+    </View>
+  );
+}
+
+function TermsCard({ children }: { children: React.ReactNode }) {
+  return <Text style={styles.termsCard}>{children}</Text>;
 }
 
 function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSession | null; onOpenAuction: (id: number) => void; onSettings: () => void }) {
@@ -164,7 +239,7 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
   const visible = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     const filteredByTab = filter === 'FAVORITAS'
-      ? auctions.filter((a) => ['Joyeria Ruz', 'Automotores'].includes(a.titulo))
+      ? auctions.filter((a) => a.favorito)
       : auctions.filter((a) => a.estado === filter);
     return filteredByTab
       .filter((a) => !normalized || `${a.titulo} ${a.descripcion} ${a.categoria} ${a.moneda}`.toLowerCase().includes(normalized))
@@ -250,7 +325,7 @@ function AuctionLiveScreen({ auctionId, session, onBack, onPayments }: { auction
         <Stat label="Tiempo restante" value="01:15:14" />
         <Stat label="Espectadores" value={String(detail.auction.espectadores)} />
       </View>
-      <Image source={{ uri: selected.imagenes[0] }} style={styles.productImage} />
+      {selected.imagenes[0] ? <Image source={{ uri: selected.imagenes[0] }} style={styles.productImage} /> : <View style={styles.productImagePlaceholder}><Ionicons name="image-outline" size={42} color={colors.gold} /></View>}
       <Text style={styles.productTitle}>{selected.titulo}</Text>
       <Text style={styles.description}>{selected.descripcion}</Text>
       {!session ? (
@@ -279,6 +354,8 @@ function AuctionLiveScreen({ auctionId, session, onBack, onPayments }: { auction
 
 function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBack: () => void }) {
   const [items, setItems] = useState<any[]>([]);
+  const [formType, setFormType] = useState<'TARJETA_CREDITO' | 'CHEQUE_CERTIFICADO' | null>(null);
+  const [form, setForm] = useState({ entidad: '', referencia: '', moneda: 'ARS', monto: '' });
   useEffect(() => { if (session) api.payments(session.userId).then((data: any) => setItems(data)); }, [session]);
   if (!session) {
     return (
@@ -289,18 +366,30 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
       </Screen>
     );
   }
-  const addPayment = async (tipo: 'TARJETA_CREDITO' | 'CHEQUE_CERTIFICADO') => {
+  const addPayment = async () => {
+    if (!formType) return;
+    if (!form.entidad.trim() || !form.referencia.trim()) {
+      Alert.alert('Datos requeridos', 'Completá entidad y referencia.');
+      return;
+    }
+    if (formType === 'CHEQUE_CERTIFICADO' && !Number(form.monto)) {
+      Alert.alert('Monto requerido', 'Para cheques certificados cargá el monto reservado.');
+      return;
+    }
     try {
       const created = await api.addPayment({
         userId: session.userId,
-        tipo,
-        etiqueta: tipo === 'TARJETA_CREDITO' ? 'Nueva tarjeta' : 'Cheque de garantia',
-        internacional: tipo === 'CHEQUE_CERTIFICADO',
-        ultimosDigitos: tipo === 'TARJETA_CREDITO' ? '4455' : '7788',
-        garantiaDisponible: tipo === 'CHEQUE_CERTIFICADO' ? 25000 : null,
+        tipo: formType,
+        etiqueta: form.entidad,
+        internacional: form.moneda === 'USD',
+        ultimosDigitos: form.referencia.slice(-4),
+        referencia: form.referencia,
+        garantiaDisponible: formType === 'CHEQUE_CERTIFICADO' ? Number(form.monto) : null,
       });
       setItems((current) => [...current, created]);
-      Alert.alert(tipo === 'TARJETA_CREDITO' ? 'Tarjeta registrada' : 'Cheque registrado', 'Metodo guardado con exito.');
+      setForm({ entidad: '', referencia: '', moneda: 'ARS', monto: '' });
+      setFormType(null);
+      Alert.alert(formType === 'TARJETA_CREDITO' ? 'Tarjeta registrada' : 'Cheque registrado', 'El método quedó pendiente de verificación.');
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos guardar el metodo.');
     }
@@ -310,9 +399,26 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
       <BackButton onPress={onBack} />
       <Text style={styles.largeTitle}>Metodos de pago</Text>
       <View style={styles.toolRow}>
-        <Pressable onPress={() => addPayment('TARJETA_CREDITO')}><Text style={styles.toolPill}>+ Tarjeta</Text></Pressable>
-        <Pressable onPress={() => addPayment('CHEQUE_CERTIFICADO')}><Text style={styles.toolPill}>+ Cheque</Text></Pressable>
+        <Pressable onPress={() => setFormType('TARJETA_CREDITO')}><Text style={styles.toolPill}>+ Tarjeta</Text></Pressable>
+        <Pressable onPress={() => setFormType('CHEQUE_CERTIFICADO')}><Text style={styles.toolPill}>+ Cheque</Text></Pressable>
       </View>
+      {formType ? (
+        <View style={styles.formCard}>
+          <Text style={styles.sectionTitle}>{formType === 'TARJETA_CREDITO' ? 'Nueva tarjeta' : 'Nuevo cheque'}</Text>
+          <Field label="Entidad / Banco" value={form.entidad} onChangeText={(value: string) => setForm((current) => ({ ...current, entidad: value }))} />
+          <Field label={formType === 'TARJETA_CREDITO' ? 'Número de tarjeta' : 'Número de cheque'} value={form.referencia} onChangeText={(value: string) => setForm((current) => ({ ...current, referencia: value }))} keyboardType="numeric" />
+          <View style={styles.toolRow}>
+            {(['ARS', 'USD'] as const).map((moneda) => (
+              <Pressable key={moneda} onPress={() => setForm((current) => ({ ...current, moneda }))}>
+                <Text style={[styles.toolPill, form.moneda === moneda && styles.toolPillActive]}>{moneda}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {formType === 'CHEQUE_CERTIFICADO' ? <Field label="Monto reservado" value={form.monto} onChangeText={(value: string) => setForm((current) => ({ ...current, monto: value }))} keyboardType="numeric" /> : null}
+          <PrimaryButton label="Guardar pendiente" onPress={addPayment} />
+          <Pressable onPress={() => setFormType(null)} style={styles.cancelButton}><Text style={styles.cancelText}>Cancelar</Text></Pressable>
+        </View>
+      ) : null}
       {items.map((item) => (
         <View key={item.id} style={styles.paymentCard}>
           <Text style={styles.paymentBrand}>{item.etiqueta}</Text>
@@ -370,17 +476,44 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [days, setDays] = useState('7');
+  const [photos, setPhotos] = useState<Array<{ uri: string; name: string }>>([]);
   const [declared, setDeclared] = useState(true);
+  const pickPhotos = async () => {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.multiple = true;
+      input.onchange = () => {
+        const files = Array.from(input.files ?? []);
+        setPhotos(files.map((file, index) => ({ uri: URL.createObjectURL(file), name: `foto-${Date.now()}-${index}-${file.name}` })));
+      };
+      input.click();
+      return;
+    }
+    const ImagePicker = require('expo-image-picker');
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return Alert.alert('Permiso requerido', 'Necesitamos permiso para seleccionar fotos.');
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      quality: 0.75,
+    });
+    if (result.canceled) return;
+    setPhotos(result.assets.map((asset: any, index: number) => ({ uri: asset.uri, name: `foto-${Date.now()}-${index}.jpg` })));
+  };
   const submit = async () => {
     if (!session) return Alert.alert('Inicie sesion', 'Necesitas una cuenta para subir un objeto.');
     if (!declared) return Alert.alert('Declaracion requerida', 'Debes declarar que el bien te pertenece y aceptar la devolucion con cargo.');
+    if (photos.length < 6) return Alert.alert('Fotos requeridas', 'Debés subir al menos 6 fotos del objeto.');
     try {
       await api.submitProduct({
         userId: session.userId,
         titulo: title,
         descripcion: description,
         precioBasePretendido: Number(price),
-        cantidadFotos: 6,
+        fotos: photos.map((photo) => photo.name),
+        cantidadFotos: photos.length,
         declaracionPropiedad: true,
         aceptaDevolucionConCargo: true,
       });
@@ -388,6 +521,7 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
       setTitle('');
       setDescription('');
       setPrice('');
+      setPhotos([]);
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos subir el bien.');
     }
@@ -400,7 +534,12 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
         <Field label="Descripcion" value={description} onChangeText={setDescription} multiline placeholder="Detalles sobre la historia, condicion, caracteristicas..." />
         <Field label="Precio base" value={price} onChangeText={setPrice} keyboardType="numeric" placeholder="0.00" />
         <Field label="Duracion" value={days} onChangeText={setDays} keyboardType="numeric" placeholder="CANT. DIAS" />
-        <View style={styles.photoBox}><Ionicons name="images-outline" size={26} color={colors.burgundy} /><Text style={styles.photoText}>6 fotos cargadas para evaluacion</Text></View>
+        <Pressable style={styles.photoBox} onPress={pickPhotos}><Ionicons name="images-outline" size={26} color={colors.burgundy} /><Text style={styles.photoText}>{photos.length ? `${photos.length} fotos seleccionadas` : 'Subir al menos 6 fotos'}</Text></Pressable>
+        {photos.length ? (
+          <View style={styles.photoPreviewGrid}>
+            {photos.slice(0, 6).map((photo) => <Image key={photo.uri} source={{ uri: photo.uri }} style={styles.photoPreview} />)}
+          </View>
+        ) : null}
         <Pressable onPress={() => setDeclared((value) => !value)} style={styles.declarationRow}>
           <View style={[styles.checkBox, declared && styles.checkBoxSelected]} />
           <Text style={styles.description}>Declaro que el bien me pertenece y acepto devolucion con cargo.</Text>
@@ -441,16 +580,17 @@ function ProfileScreen({ session, onMetrics, onSettings }: { session: UserSessio
         <Image source={session?.fotoUri ? { uri: session.fotoUri } : require('./assets/user-avatar.png')} style={styles.profileHeroAvatar} />
         <View style={{ flex: 1 }}>
           <Text style={styles.profileHeroName}>{session ? `${session.nombre}\n${session.apellido}` : 'Invitado'}</Text>
-          <Text style={styles.memberDark}>MIEMBRO DESDE 2022</Text>
+          <Text style={styles.memberDark}>{session ? session.email : ''}</Text>
           <RankBadge category={session?.categoria} />
         </View>
       </View>
-      <View style={styles.nextLevelCard}>
-        <Text style={styles.nextTitle}>Siguiente nivel</Text>
-        <Text style={styles.nextText}>Estas a 3 adquisiciones de la categoria <Text style={styles.nextStrong}>ORO</Text></Text>
-        <View style={styles.nextTrack}><View style={styles.nextProgress} /></View>
-        <View style={styles.nextLabels}><Text style={styles.nextSmall}>7 ADQUISICIONES</Text><Text style={styles.nextSmall}>10 PARA ORO</Text></View>
-      </View>
+      {metrics ? (
+        <View style={styles.nextLevelCard}>
+          <Text style={styles.nextTitle}>Resumen</Text>
+          <Text style={styles.nextText}>Subastas asistidas: <Text style={styles.nextStrong}>{metrics.asistidas}</Text></Text>
+          <Text style={styles.nextText}>Subastas ganadas: <Text style={styles.nextStrong}>{metrics.ganadas}</Text></Text>
+        </View>
+      ) : null}
       <PrimaryButton label="Ver mis metricas" onPress={onMetrics} />
       <View style={styles.profileTabs}>
         {(['GANADAS', 'PARTICIPADAS'] as const).map((item) => (
@@ -459,7 +599,10 @@ function ProfileScreen({ session, onMetrics, onSettings }: { session: UserSessio
           </Pressable>
         ))}
       </View>
-      <ProfilePieceCard tab={profileTab} />
+      {metrics?.history?.filter((item: any) => profileTab === 'GANADAS' ? item.ganador === 'si' : true).map((item: any) => (
+        <ProfileBidCard key={`${item.subasta_id}-${item.item_id}-${item.importe}`} item={item} />
+      ))}
+      {metrics && (!metrics.history || metrics.history.length === 0) ? <Text style={styles.emptyText}>No hay participaciones registradas en la base.</Text> : null}
     </Screen>
   );
 }
@@ -475,16 +618,20 @@ function CoordinateShippingScreen({ session, onBack, onDone }: { session: UserSe
   }, [session.userId]);
   const accept = async () => {
     if (!selected) return Alert.alert('Direccion requerida', 'Selecciona una direccion.');
-    const shipment = await api.createShipment({ userId: session.userId, addressId: selected, producto: 'Reloj de Lujo Acero y Oro' });
-    Alert.alert('Confirmado', 'Verificaremos y te enviaremos el codigo de seguimiento.');
-    onDone(shipment);
+    try {
+      const shipment = await api.createShipment({ user_id: session.userId, address_id: selected });
+      Alert.alert('Confirmado', 'Verificaremos y te enviaremos el codigo de seguimiento.');
+      onDone(shipment);
+    } catch (error) {
+      Alert.alert('Sin compras pendientes', error instanceof Error ? error.message : 'No hay compras pendientes de envío.');
+    }
   };
   return (
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Coordinar envio" onBack={onBack} />
       <Text style={styles.paymentIntro}>Seleccione metodo de envio</Text>
       <Text style={styles.sectionTitle}>Envio a domicilio</Text>
-      {addresses.map((address) => <SelectableAddress key={address.id} title={address.direccion} subtitle={`${address.localidad}, ${address.pais}`} selected={selected === address.id} onPress={() => setSelected(address.id)} />)}
+      {addresses.map((address) => <SelectableAddress key={address.id} title={address.direccion} subtitle={`${address.ciudad}, ${address.pais}`} selected={selected === address.id} onPress={() => setSelected(address.id)} />)}
       {addresses.length === 0 ? <Text style={styles.emptyText}>No tenes direcciones cargadas. Agregalas desde Configuracion / Envios.</Text> : null}
       <PrimaryButton label="Aceptar" onPress={accept} />
     </Screen>
@@ -497,17 +644,17 @@ function ShipmentDetailScreen({ session, shipment, onBack }: { session: UserSess
   return (
     <Screen>
       <BackButton onPress={onBack} />
-      <Image source={{ uri: 'https://images.unsplash.com/photo-1523170335258-f5ed11844a49?q=80&w=900' }} style={styles.shipmentImage} />
-      <Text style={styles.productTitle}>{current?.producto ?? 'Reloj de Lujo Acero y Oro'}</Text>
-      <Text style={styles.description}>Reloj elaborado en acero inoxidable con detalles en oro. Su diseno sofisticado y mecanismo de precision lo convierten en una pieza atemporal.</Text>
+      {!current ? <Text style={styles.emptyText}>No hay envíos registrados en la base.</Text> : null}
+      {current ? <Text style={styles.productTitle}>{current.producto}</Text> : null}
+      {current?.descripcion ? <Text style={styles.description}>{current.descripcion}</Text> : null}
       <View style={styles.progressRow}>
         <View style={styles.progressDotActive} /><View style={styles.progressLine} />
         <View style={styles.progressDotActive} /><View style={styles.progressLine} />
         <View style={styles.progressDot} />
       </View>
       <View style={styles.shipmentMetaRow}>
-        <Stat label="Numero de seguimiento" value={current?.tracking ?? '123456778'} />
-        <Stat label="Fecha estimada" value={current?.fechaEstimada ?? '7 de Agosto'} />
+        <Stat label="Numero de seguimiento" value={current?.tracking ?? ''} />
+        <Stat label="Estado" value={current?.estado ?? ''} />
       </View>
     </Screen>
   );
@@ -526,17 +673,7 @@ function SelectableAddress({ title, subtitle, selected, onPress }: { title: stri
 function MetricsScreen({ session, onBack }: { session: UserSession; onBack: () => void }) {
   const [metrics, setMetrics] = useState<any | null>(null);
   useEffect(() => { api.metrics(session.userId).then(setMetrics); }, [session.userId]);
-  const data = metrics ?? {
-    asistidas: 54,
-    ganadas: 12,
-    totalOfertado: 142500,
-    totalPagado: 64200,
-    exitoPlatino: 0,
-    exitoOro: 0,
-    exitoPlata: 45,
-    exitoEspecial: 64,
-    exitoComun: 71,
-  };
+  const data = metrics ?? { asistidas: 0, ganadas: 0, totalOfertado: 0, totalPagado: 0, exitoPlatino: 0, exitoOro: 0, exitoPlata: 0, exitoEspecial: 0, exitoComun: 0 };
   return (
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Mis metricas" onBack={onBack} />
@@ -558,17 +695,16 @@ function MetricsScreen({ session, onBack }: { session: UserSession; onBack: () =
   );
 }
 
-function ProfilePieceCard({ tab }: { tab: 'GANADAS' | 'PARTICIPADAS' }) {
+function ProfileBidCard({ item }: { item: any }) {
   return (
     <View style={styles.profilePieceCard}>
-      <Image source={{ uri: 'https://images.unsplash.com/photo-1567538096630-e0c55bd6374c?q=80&w=900' }} style={styles.profilePieceImage} />
       <View style={styles.profilePieceTitleRow}>
-        <Text style={styles.profilePieceTitle}>{tab === 'GANADAS' ? 'Sillon Estilo\nLuis XV' : 'Subasta Joyeria Ruz'}</Text>
-        <RankBadge category="PLATA" />
+        <Text style={styles.profilePieceTitle}>{item.subasta}</Text>
+        <Text style={styles.verified}>{item.ganador === 'si' ? 'GANADA' : 'PARTICIPADA'}</Text>
       </View>
       <View style={styles.profilePieceFooter}>
-        <Text style={styles.profilePieceDesc}>Sillon confeccionado en madera tallada con detalles...</Text>
-        <Text style={styles.profilePiecePrice}>Precio{"\n"}$6.300 USD</Text>
+        <Text style={styles.profilePieceDesc}>Ítem #{item.item_id}</Text>
+        <Text style={styles.profilePiecePrice}>Oferta{"\n"}${Number(item.importe).toLocaleString()}</Text>
       </View>
     </View>
   );
@@ -630,21 +766,44 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
     apellido: session.apellido,
     email: session.email,
     password: '',
-    domicilio: session.domicilio ?? 'Calle 123',
-    pais: session.pais ?? 'Argentina',
+    domicilio: session.domicilio ?? '',
+    pais: session.pais ?? '',
     fotoUri: session.fotoUri ?? '',
     fotoBase64: '',
   });
   const [saving, setSaving] = useState(false);
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
   const changePhoto = async () => {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const value = String(reader.result);
+          setForm((current) => ({
+            ...current,
+            fotoUri: value,
+            fotoBase64: value.includes(',') ? value.split(',')[1] : value,
+          }));
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+      return;
+    }
+
+    const ImagePicker = require('expo-image-picker');
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       Alert.alert('Permiso requerido', 'Necesitamos permiso para seleccionar una foto de perfil.');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.75,
@@ -667,8 +826,7 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
     try {
       const updated = await api.updateProfile(session.userId, form);
       onSaved(updated);
-      Alert.alert('Perfil actualizado', 'Tus datos se guardaron correctamente.');
-      onBack();
+      Alert.alert('Perfil actualizado', 'Tus datos se guardaron correctamente.', [{ text: 'Aceptar', onPress: onBack }]);
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos guardar el perfil.');
     } finally {
@@ -703,19 +861,54 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
   );
 }
 
-function ShippingScreen({ onBack }: { onBack: () => void }) {
-  const [addresses, setAddresses] = useState([
-    { id: 1, title: 'Calle 123', subtitle: 'Buenos Aires, Argentina', tag: 'PREDETERMINADA' },
-    { id: 2, title: 'Calle 123456', subtitle: 'Buenos Aires, Argentina', tag: 'VERIFICADA' },
-  ]);
-  const [counter, setCounter] = useState(3);
-  const addAddress = () => {
-    setAddresses((current) => [
-      ...current.map((item) => ({ ...item, tag: item.tag === 'PREDETERMINADA' ? 'VERIFICADA' : item.tag })),
-      { id: counter, title: `Calle Nueva ${counter}`, subtitle: 'Buenos Aires, Argentina', tag: 'PREDETERMINADA' },
-    ]);
-    setCounter((value) => value + 1);
-    Alert.alert('Direccion agregada', 'Direccion anadida con exito.');
+function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () => void }) {
+  const [addresses, setAddresses] = useState<any[]>([]);
+  const [shipments, setShipments] = useState<any[]>([]);
+  const [editing, setEditing] = useState<any | null>(null);
+  const [form, setForm] = useState({ titulo: '', direccion: '', ciudad: '', pais: '', predeterminada: true });
+  useEffect(() => {
+    api.addresses(session.userId).then(setAddresses).catch(() => setAddresses([]));
+    api.shipments(session.userId).then((data: any) => setShipments(data)).catch(() => setShipments([]));
+  }, [session.userId]);
+  const openNewAddress = () => {
+    setEditing(null);
+    setForm({ titulo: '', direccion: '', ciudad: '', pais: '', predeterminada: addresses.length === 0 });
+  };
+  const openEditAddress = (address: any) => {
+    setEditing(address);
+    setForm({
+      titulo: address.title,
+      direccion: address.direccion ?? address.title,
+      ciudad: address.ciudad ?? '',
+      pais: address.pais ?? '',
+      predeterminada: address.predeterminada ?? address.tag === 'PREDETERMINADA',
+    });
+  };
+  const saveAddress = async () => {
+    if (!form.titulo.trim() || !form.direccion.trim()) {
+      Alert.alert('Datos requeridos', 'Completá nombre y dirección.');
+      return;
+    }
+    const payload = {
+      userId: session.userId,
+      titulo: form.titulo,
+      direccion: form.direccion,
+      ciudad: form.ciudad,
+      pais: form.pais,
+      predeterminada: form.predeterminada ? 'si' : 'no',
+    };
+    try {
+      const saved = editing ? await api.updateAddress(editing.id, payload) : await api.addAddress(payload);
+      setAddresses((current) => {
+        const next = editing ? current.map((item) => item.id === saved.id ? saved : item) : [...current, saved];
+        return form.predeterminada ? next.map((item) => ({ ...item, tag: item.id === saved.id ? 'PREDETERMINADA' : 'VERIFICADA', predeterminada: item.id === saved.id })) : next;
+      });
+      setEditing(null);
+      setForm({ titulo: '', direccion: '', ciudad: '', pais: '', predeterminada: false });
+      Alert.alert('Dirección guardada', 'Los datos se guardaron correctamente.');
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos guardar la dirección.');
+    }
   };
   const makeDefault = (id: number) => {
     setAddresses((current) => current.map((item) => ({ ...item, tag: item.id === id ? 'PREDETERMINADA' : 'VERIFICADA' })));
@@ -725,46 +918,72 @@ function ShippingScreen({ onBack }: { onBack: () => void }) {
       <ConfigHeader title="Envios" onBack={onBack} />
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionTitle}>Direcciones de entrega</Text>
-        <Pressable onPress={addAddress}><Text style={styles.addText}>+ ANADIR</Text></Pressable>
+        <Pressable onPress={openNewAddress}><Text style={styles.addText}>+ AÑADIR</Text></Pressable>
       </View>
+      {(editing || form.titulo || form.direccion) ? (
+        <View style={styles.formCard}>
+          <Field label="Nombre de dirección" value={form.titulo} onChangeText={(value: string) => setForm((current) => ({ ...current, titulo: value }))} />
+          <Field label="Dirección" value={form.direccion} onChangeText={(value: string) => setForm((current) => ({ ...current, direccion: value }))} />
+          <Field label="Ciudad" value={form.ciudad} onChangeText={(value: string) => setForm((current) => ({ ...current, ciudad: value }))} />
+          <Field label="País" value={form.pais} onChangeText={(value: string) => setForm((current) => ({ ...current, pais: value }))} />
+          <Pressable onPress={() => setForm((current) => ({ ...current, predeterminada: !current.predeterminada }))} style={styles.declarationRow}>
+            <View style={[styles.checkBox, form.predeterminada && styles.checkBoxSelected]} />
+            <Text style={styles.description}>Usar como dirección predeterminada</Text>
+          </Pressable>
+          <PrimaryButton label="Guardar dirección" onPress={saveAddress} />
+        </View>
+      ) : null}
       {addresses.map((address) => (
-        <Pressable key={address.id} onPress={() => makeDefault(address.id)}>
+        <Pressable key={address.id} onPress={() => openEditAddress(address)}>
           <AddressCard title={address.title} subtitle={address.subtitle} tag={address.tag} selected={address.tag === 'PREDETERMINADA'} />
         </Pressable>
       ))}
       <Text style={styles.sectionTitle}>Envios en curso</Text>
-      <View style={styles.shipmentCard}>
-        <Image source={{ uri: 'https://images.unsplash.com/photo-1523170335258-f5ed11844a49?q=80&w=900' }} style={styles.shipmentImage} />
-        <Text style={styles.shipmentTitle}>Reloj de Lujo Acero y Oro</Text>
-        <View style={styles.shipmentMetaRow}>
-          <Stat label="Tracking" value="123456778" />
-          <Stat label="Fecha estimada" value="7 de agosto" />
-        </View>
-        <View style={styles.progressRow}>
-          <View style={styles.progressDotActive} /><View style={styles.progressLine} />
-          <View style={styles.progressDotActive} /><View style={styles.progressLine} />
-          <View style={styles.progressDot} />
-        </View>
-      </View>
-      <Text style={styles.sectionTitle}>Historial de envios</Text>
-      {['Escultura de Bronce', 'Juego de Te', '1ra Edicion: El Quijote'].map((item) => (
-        <View key={item} style={styles.historyItem}>
-          <Ionicons name="archive" size={24} color={colors.burgundy} />
-          <View><Text style={styles.historyTitle}>{item}</Text><Text style={styles.settingsDetail}>Entregado correctamente</Text></View>
+      {shipments.filter((shipment) => shipment.estado !== 'entregado').map((shipment) => (
+        <View key={shipment.id} style={styles.shipmentCard}>
+          <Text style={styles.shipmentTitle}>{shipment.producto}</Text>
+          <View style={styles.shipmentMetaRow}>
+            <Stat label="Tracking" value={shipment.tracking ?? ''} />
+            <Stat label="Estado" value={shipment.estado ?? ''} />
+          </View>
         </View>
       ))}
+      {shipments.filter((shipment) => shipment.estado !== 'entregado').length === 0 ? <Text style={styles.emptyText}>No hay envíos en curso en la base.</Text> : null}
+      <Text style={styles.sectionTitle}>Historial de envios</Text>
+      {shipments.filter((shipment) => shipment.estado === 'entregado').map((shipment) => (
+        <View key={shipment.id} style={styles.historyItem}>
+          <Ionicons name="archive" size={24} color={colors.burgundy} />
+          <View><Text style={styles.historyTitle}>{shipment.producto}</Text><Text style={styles.settingsDetail}>{shipment.estado}</Text></View>
+        </View>
+      ))}
+      {shipments.filter((shipment) => shipment.estado === 'entregado').length === 0 ? <Text style={styles.emptyText}>No hay envíos entregados en la base.</Text> : null}
     </Screen>
   );
 }
 
-function MyPiecesScreen({ onBack }: { onBack: () => void }) {
+function MyPiecesScreen({ session, onBack }: { session: UserSession; onBack: () => void }) {
   const [filter, setFilter] = useState<'ACTIVAS' | 'EN SUBASTA' | 'EN REVISION'>('ACTIVAS');
   const [query, setQuery] = useState('');
-  const [proposalStatus, setProposalStatus] = useState<'PENDIENTE' | 'ACEPTADA' | 'RECHAZADA'>('PENDIENTE');
-  const matches = (text: string) => text.toLowerCase().includes(query.trim().toLowerCase());
+  const [pieces, setPieces] = useState<any[]>([]);
+  useEffect(() => {
+    api.myPieces(session.userId).then(setPieces).catch(() => setPieces([]));
+  }, [session.userId]);
+  const normalized = query.trim().toLowerCase();
+  const visiblePieces = pieces.filter((piece) => {
+    const text = `${piece.titulo} ${piece.descripcion} ${piece.estado}`.toLowerCase();
+    const matchesText = !normalized || text.includes(normalized);
+    const status = String(piece.estado).toLowerCase();
+    const matchesTab = filter === 'EN REVISION'
+      ? ['pendiente', 'en_revision'].includes(status)
+      : filter === 'EN SUBASTA'
+        ? ['aceptado'].includes(status)
+        : ['aceptado', 'pendiente', 'en_revision'].includes(status);
+    return matchesText && matchesTab;
+  });
   return (
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Mis piezas" onBack={onBack} />
+      <Text style={styles.description}>Esta sección corresponde a solicitudes_productos y solicitudes_fotos; cuando una pieza aceptada entra a catálogo se relaciona con productos, itemsCatalogo, catalogos y subastas.</Text>
       <View style={styles.searchBox}>
         <TextInput value={query} onChangeText={setQuery} placeholder="Buscador" placeholderTextColor={colors.muted} style={styles.searchInput} />
         <Ionicons name="search" size={20} color={colors.ink} />
@@ -776,12 +995,8 @@ function MyPiecesScreen({ onBack }: { onBack: () => void }) {
           </Pressable>
         ))}
       </View>
-      {filter === 'ACTIVAS' && matches('Plato de Porcelana') ? (
-        <PieceProposal status={proposalStatus} onAccept={() => { setProposalStatus('ACEPTADA'); Alert.alert('Propuesta aceptada', 'Muchas gracias por confiar en BidVault.'); }} onReject={() => { setProposalStatus('RECHAZADA'); Alert.alert('Propuesta rechazada', 'La empresa se pondra en contacto para coordinar el envio.'); }} />
-      ) : null}
-      {filter === 'EN SUBASTA' && matches('Escultura') ? <PieceAuction /> : null}
-      {filter === 'EN REVISION' && (matches('Obra Clasica de Jardin') || matches('Bolso de coleccion')) ? <PieceReview /> : null}
-      {((filter === 'ACTIVAS' && !matches('Plato de Porcelana')) || (filter === 'EN SUBASTA' && !matches('Escultura')) || (filter === 'EN REVISION' && !(matches('Obra Clasica de Jardin') || matches('Bolso de coleccion')))) ? <Text style={styles.emptyText}>No encontramos piezas con esa busqueda.</Text> : null}
+      {visiblePieces.map((piece) => <PieceRequestCard key={piece.id} piece={piece} />)}
+      {visiblePieces.length === 0 ? <Text style={styles.emptyText}>No encontramos piezas con esa busqueda.</Text> : null}
     </Screen>
   );
 }
@@ -873,58 +1088,16 @@ function AddressCard({ title, subtitle, tag, selected }: { title: string; subtit
   );
 }
 
-function PieceProposal({ status, onAccept, onReject }: { status: 'PENDIENTE' | 'ACEPTADA' | 'RECHAZADA'; onAccept: () => void; onReject: () => void }) {
+function PieceRequestCard({ piece }: { piece: any }) {
   return (
     <View style={styles.pieceCard}>
-      <Image source={{ uri: 'https://images.unsplash.com/photo-1577083552431-6e5fd01aa342?q=80&w=900' }} style={styles.pieceImage} />
-      <Text style={styles.pieceTitle}>Plato de Porcelana</Text>
-      <View style={styles.pieceInfoGrid}>
-        <Text style={styles.pieceInfo}>FECHA Y HORA{"\n"}20 de mayo del 2026{"\n"}9:30hs</Text>
-        <Text style={styles.pieceInfo}>UBICACION{"\n"}Galeria Central</Text>
-        <Text style={styles.pieceInfo}>PRECIO{"\n"}$ 4.200 USD</Text>
-        <Text style={styles.pieceInfo}>COMISION{"\n"}5%</Text>
-      </View>
-      <Text style={styles.pieceInfo}>POLIZA DE SEGURO     Sancor Seguros AXA-7729-LX Cobertura total</Text>
-      {status === 'PENDIENTE' ? (
-        <>
-          <PrimaryButton label="Aceptar Propuesta" onPress={onAccept} />
-          <Pressable onPress={onReject} style={styles.cancelButton}><Text style={styles.cancelText}>Rechazar</Text></Pressable>
-        </>
-      ) : (
-        <Text style={[styles.verified, status === 'RECHAZADA' && styles.rejectedText]}>
-          {status === 'ACEPTADA' ? 'Propuesta aceptada' : 'Propuesta rechazada'}
-        </Text>
-      )}
+      {piece.foto?.startsWith('http') ? <Image source={{ uri: piece.foto }} style={styles.pieceImage} /> : <View style={styles.pieceImagePlaceholder}><Ionicons name="image-outline" size={38} color={colors.gold} /></View>}
+      <Text style={styles.pieceTitle}>{piece.titulo}</Text>
+      <Text style={styles.description}>{piece.descripcion}</Text>
+      <Text style={styles.verified}>Estado: {String(piece.estado).replace('_', ' ').toUpperCase()}</Text>
+      {piece.seguro ? <Text style={styles.description}>Póliza: {piece.seguro}</Text> : null}
+      {piece.deposito ? <Text style={styles.description}>Depósito: {piece.deposito}</Text> : null}
     </View>
-  );
-}
-
-function PieceAuction() {
-  return (
-    <View style={styles.pieceCard}>
-      <Image source={{ uri: 'https://images.unsplash.com/photo-1579783901586-d88db74b4fe4?q=80&w=900' }} style={styles.pieceImage} />
-      <Text style={styles.liveBadge}>EN VIVO</Text>
-      <Text style={styles.pieceTitle}>Escultura</Text>
-      <Text style={styles.offerLabel}>Oferta actual</Text>
-      <Text style={styles.offerValue}>$12.400 USD</Text>
-    </View>
-  );
-}
-
-function PieceReview() {
-  return (
-    <>
-      <View style={styles.pieceCard}>
-        <Image source={{ uri: 'https://images.unsplash.com/photo-1580136579312-94651dfd596d?q=80&w=900' }} style={styles.pieceImage} />
-        <Text style={styles.pieceTitle}>Obra Clasica de Jardin</Text>
-        <Text style={styles.description}>Pendiente de inspeccion tecnica. Un experto valuador revisara la pieza en las proximas 48 horas.</Text>
-      </View>
-      <View style={styles.pieceCard}>
-        <Image source={{ uri: 'https://images.unsplash.com/photo-1590874103328-eac38a683ce7?q=80&w=900' }} style={styles.pieceImage} />
-        <Text style={styles.pieceTitle}>Bolso de coleccion</Text>
-        <Text style={styles.description}>Documentacion pendiente.</Text>
-      </View>
-    </>
   );
 }
 
@@ -961,6 +1134,9 @@ function Stat({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   splash: { flex: 1, backgroundColor: colors.linen, alignItems: 'center', justifyContent: 'center', padding: 28 },
   splashLogo: { width: '94%', maxWidth: 430, height: 430 },
+  errorScreen: { flex: 1, backgroundColor: colors.linen, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  errorTitle: { color: colors.burgundy, fontSize: 28, fontWeight: '900', marginBottom: 10 },
+  errorText: { color: colors.ink, fontSize: 15, lineHeight: 22, textAlign: 'center' },
   splashLogoFallback: { width: '94%', maxWidth: 430, height: 430, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.gold, borderRadius: 8, backgroundColor: colors.cream },
   splashBrand: { color: colors.burgundy, fontSize: 48, fontWeight: '900', marginTop: 12 },
   brandBlock: { minHeight: 190, justifyContent: 'center', borderBottomColor: colors.gold, borderBottomWidth: 1, marginBottom: 24 },
@@ -976,8 +1152,29 @@ const styles = StyleSheet.create({
   link: { color: colors.burgundy, fontWeight: '900', textAlign: 'center', marginTop: 16 },
   secondaryLink: { color: colors.muted, fontWeight: '700', textAlign: 'center', marginTop: 12 },
   terms: { color: colors.muted, textAlign: 'center', marginTop: 28, fontSize: 12 },
+  termsScreen: { backgroundColor: colors.linen },
+  termsHeader: { minHeight: 74, marginHorizontal: -18, marginTop: -18, paddingHorizontal: 18, backgroundColor: colors.cream, flexDirection: 'row', alignItems: 'center', gap: 22 },
+  termsTitle: { color: colors.burgundy, fontSize: 27, fontWeight: '900', flex: 1 },
+  termsSection: { marginTop: 34 },
+  termsSectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 16 },
+  termsNumber: { color: '#8B7D64', fontSize: 38, fontWeight: '900', fontStyle: 'italic' },
+  termsSectionTitle: { color: '#50483B', fontSize: 24, fontWeight: '900', flex: 1 },
+  termsCard: { backgroundColor: colors.cream, borderLeftWidth: 3, borderLeftColor: colors.burgundy, borderRadius: 6, padding: 18, color: '#4E463B', fontSize: 16, lineHeight: 22, marginBottom: 14, ...shadow },
+  incrementBox: { backgroundColor: '#D8D2C2', borderRadius: 8, padding: 16, marginHorizontal: 20, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', ...shadow },
+  incrementLabel: { color: '#5B5348', fontSize: 16, fontWeight: '700' },
+  incrementValue: { color: colors.burgundy, fontSize: 26, fontWeight: '900', textAlign: 'center' },
+  incrementSmall: { color: colors.ink, fontSize: 13, fontWeight: '400' },
+  warningBox: { backgroundColor: '#D4CDB9', borderRadius: 6, padding: 16, marginBottom: 14, flexDirection: 'row', alignItems: 'center', gap: 14 },
+  warningText: { flex: 1, color: colors.ink, fontSize: 15, lineHeight: 22 },
+  warningTextItalic: { flex: 1, color: '#4E463B', fontSize: 15, lineHeight: 22, fontStyle: 'italic' },
+  bold: { fontWeight: '900' },
+  conformityCard: { backgroundColor: colors.white, borderRadius: 8, padding: 24, marginVertical: 28, ...shadow },
+  conformityTitle: { color: '#111', fontSize: 28, fontWeight: '900', textAlign: 'center', marginBottom: 22 },
+  conformityText: { color: colors.ink, fontSize: 16, lineHeight: 22, textAlign: 'center', marginBottom: 18 },
   photoBox: { minHeight: 86, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.gold, borderRadius: 8, alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 16 },
   photoText: { color: colors.burgundy, fontWeight: '800' },
+  photoPreviewGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  photoPreview: { width: 70, height: 70, borderRadius: 6, backgroundColor: colors.linen },
   uploadPanel: { backgroundColor: colors.cream, borderRadius: 8, padding: 14, marginBottom: 16, ...shadow },
   declarationRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 2 },
   searchBox: { minHeight: 52, borderRadius: 26, backgroundColor: colors.linen, paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
@@ -985,6 +1182,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, minHeight: 46, color: colors.ink, fontSize: 16 },
   toolRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginBottom: 12 },
   toolPill: { backgroundColor: colors.linen, color: colors.muted, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 4, fontSize: 12 },
+  toolPillActive: { backgroundColor: colors.burgundy, color: colors.cream },
   segment: { flexDirection: 'row', backgroundColor: colors.linen, borderRadius: 8, padding: 4, marginBottom: 18 },
   segmentItem: { flex: 1, minHeight: 38, justifyContent: 'center', alignItems: 'center', borderRadius: 6 },
   segmentActive: { backgroundColor: colors.white },
@@ -999,6 +1197,7 @@ const styles = StyleSheet.create({
   statLabel: { color: colors.muted, fontSize: 11, fontWeight: '900', textTransform: 'uppercase' },
   statValue: { color: colors.burgundy, fontSize: 19, fontWeight: '900', marginTop: 4 },
   productImage: { height: 220, borderRadius: 8, backgroundColor: colors.linen, marginBottom: 14 },
+  productImagePlaceholder: { height: 220, borderRadius: 8, backgroundColor: colors.linen, marginBottom: 14, alignItems: 'center', justifyContent: 'center' },
   productTitle: { color: colors.ink, fontSize: 24, fontWeight: '900' },
   description: { color: colors.muted, lineHeight: 21, marginTop: 6 },
   bidPanel: { flexDirection: 'row', gap: 10, marginTop: 16 },
@@ -1119,6 +1318,7 @@ const styles = StyleSheet.create({
   historyTitle: { color: colors.ink, fontSize: 16, fontWeight: '900' },
   pieceCard: { backgroundColor: colors.cream, borderRadius: 8, padding: 14, marginBottom: 18 },
   pieceImage: { height: 170, borderRadius: 6, marginBottom: 12 },
+  pieceImagePlaceholder: { height: 170, borderRadius: 6, marginBottom: 12, backgroundColor: colors.linen, alignItems: 'center', justifyContent: 'center' },
   pieceTitle: { color: colors.ink, fontSize: 22, fontWeight: '900', marginBottom: 8 },
   pieceInfoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   pieceInfo: { color: colors.ink, width: '46%', fontSize: 11, lineHeight: 16, marginBottom: 8 },

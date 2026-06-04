@@ -1,4 +1,8 @@
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api';
+export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api';
+
+if (__DEV__) {
+  console.info(`BidVault API: ${API_URL}`);
+}
 
 export type UserSession = {
   token: string;
@@ -25,6 +29,8 @@ export type AuctionSummary = {
   espectadores: number;
   precioDesde: number;
   productoDestacado: string;
+  imagenPortada?: string;
+  favorito: boolean;
 };
 
 export type ProductItem = {
@@ -47,13 +53,18 @@ export type AuctionDetail = {
 };
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers ?? {}),
+      },
+    });
+  } catch {
+    throw new Error(`No se pudo conectar con el backend en ${API_URL}. Verifica que Spring Boot este levantado y que Expo use la IP correcta.`);
+  }
   const body = await response.text();
   const payload = body ? JSON.parse(body) : null;
   if (!response.ok) {
@@ -63,23 +74,23 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 function splitName(fullName: string) {
-  const parts = String(fullName || 'Nombre Apellido').trim().split(/\s+/);
-  return { nombre: parts[0] ?? 'Nombre', apellido: parts.slice(1).join(' ') || 'Apellido' };
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  return { nombre: parts[0] ?? '', apellido: parts.slice(1).join(' ') };
 }
 
 function mapUser(payload: any): UserSession {
   const raw = payload.user ?? payload;
   const names = splitName(raw.nombre);
   return {
-    token: payload.token ?? 'demo-token',
-    userId: Number(raw.persona_id ?? raw.identificador ?? raw.userId ?? 3),
+    token: payload.token ?? '',
+    userId: Number(raw.persona_id ?? raw.identificador ?? raw.userId),
     nombre: names.nombre,
     apellido: names.apellido,
-    email: raw.email ?? 'demo@bidvault.com',
-    domicilio: raw.direccion ?? 'Domicilio declarado',
-    pais: raw.pais ?? 'Argentina',
+    email: raw.email ?? '',
+    domicilio: raw.direccion ?? '',
+    pais: raw.pais ?? '',
     fotoUri: raw.foto_uri ?? raw.fotoUri,
-    categoria: String(raw.categoria ?? 'plata').toUpperCase(),
+    categoria: String(raw.categoria ?? '').toUpperCase(),
     admitido: raw.admitido === true || raw.admitido === 'si',
   };
 }
@@ -88,25 +99,19 @@ function mapAuction(raw: any): AuctionSummary {
   const categoria = String(raw.categoria ?? 'comun').toUpperCase();
   return {
     id: Number(raw.id ?? raw.identificador),
-    titulo: raw.titulo ?? raw.descripcion ?? 'Subasta',
-    descripcion: `${raw.piezas ?? 0} piezas seleccionadas por catalogo`,
-    fechaInicio: raw.fecha ?? new Date().toISOString(),
+    titulo: raw.titulo ?? raw.descripcion ?? '',
+    descripcion: raw.descripcion_catalogo ?? raw.descripcion ?? `${raw.piezas ?? 0} piezas seleccionadas por catalogo`,
+    fechaInicio: raw.fecha,
     estado: raw.estado === 'abierta' ? 'EN_VIVO' : raw.estado === 'carrada' ? 'FINALIZADA' : 'PROGRAMADA',
     categoria,
-    moneda: raw.moneda ?? (categoria === 'ORO' || categoria === 'PLATINO' ? 'USD' : 'ARS'),
-    ubicacion: raw.ubicacion ?? 'Sala principal',
-    espectadores: 120 + Number(raw.id ?? 0),
+    moneda: raw.moneda,
+    ubicacion: raw.ubicacion ?? '',
+    espectadores: Number(raw.espectadores ?? 0),
     precioDesde: Number(raw.precio_desde ?? raw.precioDesde ?? 0),
-    productoDestacado: raw.titulo ?? 'Pieza destacada',
+    productoDestacado: raw.producto_destacado ?? raw.titulo ?? '',
+    imagenPortada: raw.imagen_portada ?? raw.imagenPortada ?? undefined,
+    favorito: raw.favorito === true || raw.favorito === 1,
   };
-}
-
-function imageFor(title: string) {
-  const text = title.toLowerCase();
-  if (text.includes('auto')) return 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?q=80&w=900';
-  if (text.includes('instrument')) return 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?q=80&w=900';
-  if (text.includes('joy')) return 'https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?q=80&w=900';
-  return 'https://images.unsplash.com/photo-1579783902614-a3fb3927b6a5?q=80&w=900';
 }
 
 function mapProduct(raw: any, auction: AuctionSummary): ProductItem {
@@ -115,15 +120,15 @@ function mapProduct(raw: any, auction: AuctionSummary): ProductItem {
   const isPremium = auction.categoria === 'ORO' || auction.categoria === 'PLATINO';
   return {
     id: Number(raw.item_id ?? raw.id),
-    titulo: raw.descripcion?.split(' ').slice(0, 5).join(' ') ?? 'Pieza de catalogo',
-    descripcion: raw.descripcion ?? 'Pieza revisada por catalogo.',
+    titulo: raw.titulo ?? raw.descripcion?.split(' ').slice(0, 5).join(' ') ?? '',
+    descripcion: raw.descripcion ?? '',
     numeroPieza: Number(raw.producto_id ?? raw.item_id ?? 1),
     precioBase: base,
     mejorOferta: best,
     ofertaMinima: Math.round(best + base * 0.01),
     ofertaMaxima: isPremium ? null : Math.round(best + base * 0.2),
     vendido: raw.subastado === 'si',
-    imagenes: [imageFor(auction.titulo)],
+    imagenes: raw.imagen ? [raw.imagen] : [],
   };
 }
 
@@ -149,20 +154,22 @@ export const api = {
         apellido: payload.apellido,
         email: payload.email,
         password: payload.password,
-        documento: `${Date.now()}`.slice(-8),
+        documento: payload.documento,
         direccion: payload.domicilio,
         numero_pais: 32,
       }),
     });
-    return mapUser({ token: 'demo-token', user: { ...created, nombre: `${payload.nombre} ${payload.apellido}`, email: payload.email, categoria: 'comun', admitido: 'no', direccion: payload.domicilio } });
+    return mapUser({ token: '', user: { ...created, nombre: `${payload.nombre} ${payload.apellido}`, email: payload.email, categoria: 'comun', admitido: 'no', direccion: payload.domicilio, pais: payload.pais } });
   },
   auctions: async () => (await request<any[]>('/auctions')).map(mapAuction),
+  updateAuctionCover: (auctionId: number, payload: { imagen: string; mimeType?: string; descripcion?: string }) =>
+    request(`/auctions/${auctionId}/cover`, { method: 'PUT', body: JSON.stringify(payload) }),
   auction: async (id: number, userId?: number) => {
     const payload = await request<any>(`/auctions/${id}${userId ? `?clienteId=${userId}` : ''}`);
     const auction = mapAuction(payload.auction);
     return {
       auction,
-      subastador: payload.auction?.subastador ?? 'Martillero asignado',
+      subastador: payload.auction?.subastador ?? '',
       products: (payload.items ?? []).map((item: any) => mapProduct(item, auction)),
     };
   },
@@ -189,7 +196,7 @@ export const api = {
         tipo,
         moneda: payload.internacional ? 'USD' : 'ARS',
         entidad: payload.etiqueta,
-        referencia: `**** ${payload.ultimosDigitos}`,
+        referencia: payload.referencia ?? `**** ${payload.ultimosDigitos}`,
         monto_reservado: payload.garantiaDisponible,
       }),
     });
@@ -202,15 +209,18 @@ export const api = {
     const profile = payload.profile ?? {};
     const history = payload.history ?? [];
     const totalOfertado = history.reduce((sum: number, item: any) => sum + Number(item.importe ?? 0), 0);
-    const byCategory = { exitoPlatino: 0, exitoOro: 0, exitoPlata: 0, exitoEspecial: 0, exitoComun: 0 };
     return {
       asistidas: Number(profile.subastas_asistidas ?? 0),
       ganadas: Number(profile.subastas_ganadas ?? 0),
       totalOfertado,
       totalPagado: Number(profile.total_pagado ?? 0),
       pujasRealizadas: Number(profile.pujas_realizadas ?? history.length),
-      ...byCategory,
-      exitoPlata: Number(profile.subastas_asistidas ?? 0) ? Math.round((Number(profile.subastas_ganadas ?? 0) / Number(profile.subastas_asistidas ?? 1)) * 100) : 0,
+      exitoPlatino: Number(profile.exito_platino ?? 0),
+      exitoOro: Number(profile.exito_oro ?? 0),
+      exitoPlata: Number(profile.exito_plata ?? 0),
+      exitoEspecial: Number(profile.exito_especial ?? 0),
+      exitoComun: Number(profile.exito_comun ?? 0),
+      history,
     };
   },
   updateProfile: async (userId: number, payload: Record<string, string>) => {
@@ -227,9 +237,18 @@ export const api = {
         foto_uri: payload.fotoUri || null,
       }),
     });
-    return mapUser({ token: 'demo-token', user: updated });
+    return mapUser({ token: '', user: updated });
   },
-  notifications: (userId: number) => request(`/notifications/${userId}`),
+  notifications: async (userId: number) => {
+    const rows = await request<any[]>(`/notifications/${userId}`);
+    return rows.map((item) => ({
+      id: item.identificador,
+      titulo: item.titulo,
+      mensaje: item.cuerpo,
+      importante: item.tipo === 'importante',
+      creadoEn: item.creado_en,
+    }));
+  },
   submitProduct: (payload: Record<string, unknown>) =>
     request('/sell-requests', {
       method: 'POST',
@@ -238,17 +257,61 @@ export const api = {
         titulo: payload.titulo,
         descripcion: payload.descripcion,
         historia: payload.historia ?? '',
-        fotos: Array.from({ length: 6 }, (_, index) => `https://example.com/pieza-${Date.now()}-${index}.jpg`),
+        fotos: payload.fotos,
       }),
     }),
-  addresses: async (_userId: number) => [
-    { id: 1, titulo: 'Domicilio legal', direccion: 'Calle Legal 123, CABA', tag: 'PRINCIPAL' },
-    { id: 2, titulo: 'Retiro alternativo', direccion: 'Av. Santa Fe 1400, CABA', tag: 'OPCIONAL' },
-  ],
-  addAddress: async (payload: Record<string, unknown>) => ({ id: Date.now(), ...payload }),
-  makeDefaultAddress: async (id: number) => ({ id, principal: true }),
-  shipments: async (_userId: number) => [
-    { id: 1, producto: 'Reloj de Lujo Acero y Oro', estado: 'DESPACHADO', codigo: 'BV-AR-5520' },
-  ],
-  createShipment: async (payload: Record<string, unknown>) => ({ id: Date.now(), estado: 'PENDIENTE', codigo: 'BV-AR-NEW', ...payload }),
+  addresses: async (userId: number) => {
+    const rows = await request<any[]>(`/shipping/addresses?userId=${userId}`);
+    return rows.map((item) => ({
+      id: item.id,
+      title: item.titulo,
+      subtitle: `${item.direccion}, ${item.ciudad}, ${item.pais}`,
+      direccion: item.direccion,
+      ciudad: item.ciudad,
+      pais: item.pais,
+      tag: item.predeterminada === 'si' ? 'PREDETERMINADA' : 'VERIFICADA',
+      predeterminada: item.predeterminada === 'si',
+    }));
+  },
+  addAddress: async (payload: Record<string, unknown>) => {
+    const item = await request<any>('/shipping/addresses', { method: 'POST', body: JSON.stringify(payload) });
+    return {
+      id: item.id,
+      title: item.titulo,
+      subtitle: `${item.direccion}, ${item.ciudad}, ${item.pais}`,
+      direccion: item.direccion,
+      ciudad: item.ciudad,
+      pais: item.pais,
+      tag: item.predeterminada === 'si' ? 'PREDETERMINADA' : 'VERIFICADA',
+      predeterminada: item.predeterminada === 'si',
+    };
+  },
+  updateAddress: async (id: number, payload: Record<string, unknown>) => {
+    const item = await request<any>(`/shipping/addresses/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    return {
+      id: item.id,
+      title: item.titulo,
+      subtitle: `${item.direccion}, ${item.ciudad}, ${item.pais}`,
+      direccion: item.direccion,
+      ciudad: item.ciudad,
+      pais: item.pais,
+      tag: item.predeterminada === 'si' ? 'PREDETERMINADA' : 'VERIFICADA',
+      predeterminada: item.predeterminada === 'si',
+    };
+  },
+  makeDefaultAddress: async (id: number, payload?: Record<string, unknown>) => api.updateAddress(id, { ...(payload ?? {}), predeterminada: 'si' }),
+  myPieces: async (userId: number) => {
+    const rows = await request<any[]>(`/my-pieces/${userId}`);
+    return rows.map((item) => ({
+      id: item.id,
+      titulo: item.titulo,
+      descripcion: item.descripcion,
+      estado: item.estado,
+      foto: item.foto,
+      deposito: item.deposito,
+      seguro: item.seguro,
+    }));
+  },
+  shipments: (userId: number) => request(`/shipping/shipments?userId=${userId}`),
+  createShipment: (payload: Record<string, unknown>) => request('/shipping/shipments', { method: 'POST', body: JSON.stringify(payload) }),
 };
