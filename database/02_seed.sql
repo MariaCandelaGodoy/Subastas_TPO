@@ -56,6 +56,9 @@ INSERT INTO catalogos (identificador, descripcion, subasta, responsable) VALUES
 (3, 'Instrumentos musicales', 3, 1),
 (4, 'Joyería Ruiz', 4, 1);
 
+INSERT INTO subastas_estados_app (subasta, estado_app) VALUES
+(2, 'programada');
+
 INSERT INTO itemsCatalogo (identificador, catalogo, producto, precioBase, comision, subastado) VALUES
 (1, 1, 1, 90000.00, 0.12, 'no'),
 (2, 1, 2, 120000.00, 0.15, 'no'),

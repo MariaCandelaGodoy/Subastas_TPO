@@ -146,6 +146,14 @@ CREATE TABLE subastas_portadas (
   CONSTRAINT fk_subastas_portadas_subastas FOREIGN KEY (subasta) REFERENCES subastas(identificador)
 );
 
+CREATE TABLE subastas_estados_app (
+  subasta INT NOT NULL,
+  estado_app VARCHAR(15) NOT NULL,
+  CONSTRAINT pk_subastas_estados_app PRIMARY KEY (subasta),
+  CONSTRAINT chk_subastas_estados_app CHECK (estado_app IN ('abierta','carrada','programada')),
+  CONSTRAINT fk_subastas_estados_app_subastas FOREIGN KEY (subasta) REFERENCES subastas(identificador)
+);
+
 CREATE TABLE productos (
   identificador INT NOT NULL AUTO_INCREMENT,
   fecha DATE,

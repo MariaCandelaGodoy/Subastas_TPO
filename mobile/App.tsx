@@ -233,8 +233,24 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
   const [ascending, setAscending] = useState(true);
 
   useEffect(() => {
-    api.auctions().then(setAuctions).catch(() => Alert.alert('Conexion', 'No se pudo conectar con el backend.')).finally(() => setLoading(false));
-  }, []);
+    setLoading(true);
+    api.auctions(session?.userId).then(setAuctions).catch(() => Alert.alert('Conexion', 'No se pudo conectar con el backend.')).finally(() => setLoading(false));
+  }, [session?.userId]);
+
+  const toggleFavorite = async (auction: AuctionSummary) => {
+    if (!session) {
+      Alert.alert('Inicie sesion', 'Necesitas iniciar sesion para guardar favoritas.');
+      return;
+    }
+    const next = !auction.favorito;
+    setAuctions((current) => current.map((item) => item.id === auction.id ? { ...item, favorito: next } : item));
+    try {
+      await api.setFavorite(session.userId, auction.id, next);
+    } catch (error) {
+      setAuctions((current) => current.map((item) => item.id === auction.id ? { ...item, favorito: auction.favorito } : item));
+      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos actualizar favoritas.');
+    }
+  };
 
   const visible = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -275,7 +291,13 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
         ))}
       </View>
       {loading ? <ActivityIndicator color={colors.burgundy} /> : visible.map((auction) => (
-        <AuctionCard key={auction.id} auction={auction} registered={Boolean(session)} onPress={() => onOpenAuction(auction.id)} />
+        <AuctionCard
+          key={auction.id}
+          auction={auction}
+          registered={Boolean(session)}
+          onPress={() => onOpenAuction(auction.id)}
+          onFavorite={() => toggleFavorite(auction)}
+        />
       ))}
       {!loading && visible.length === 0 ? <Text style={styles.emptyText}>No encontramos subastas con esos filtros.</Text> : null}
     </Screen>
@@ -433,6 +455,7 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
 function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: UserSession; auctionId: number; onBack: () => void; onDone: () => void }) {
   const [items, setItems] = useState<any[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
   useEffect(() => { api.payments(session.userId).then((data: any) => setItems(data)); }, [session.userId]);
   const verifiedItems = items.filter((item) => item.estado === 'VERIFICADO');
   const selectPayment = (item: any) => {
@@ -445,23 +468,27 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
   const accept = async () => {
     if (!selected) return Alert.alert('Metodo requerido', 'Selecciona un medio verificado para dejar constancia de capacidad de pago.');
     try {
+      setLoading(true);
       await api.selectAuctionPayment({ userId: session.userId, auctionId, paymentMethodId: selected });
       onDone();
     } catch (error) {
-      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos registrar el acceso.');
+      const message = error instanceof Error ? error.message : 'No pudimos registrar el acceso.';
+      const title = message.toLowerCase().includes('categoria') ? 'Categoria sin permiso' : 'Error';
+      Alert.alert(title, message);
+    } finally {
+      setLoading(false);
     }
   };
   return (
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Metodos de pago" onBack={onBack} />
-      <Text style={styles.paymentIntro}>Seleccione un medio verificado como garantia de ingreso. No se va a cobrar ahora; si ganas, vas a elegir con que pagar desde la notificacion.</Text>
       <Text style={styles.sectionTitle}>Tarjetas</Text>
       {items.filter((i) => String(i.tipo).includes('TARJETA')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => selectPayment(item)} />)}
       <Text style={styles.sectionTitle}>Cheques</Text>
       {items.filter((i) => String(i.tipo).includes('CHEQUE')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => selectPayment(item)} />)}
       {items.length === 0 ? <Text style={styles.emptyText}>No tenes medios cargados. Agrega una tarjeta o cheque desde configuracion.</Text> : null}
       {items.length > 0 && verifiedItems.length === 0 ? <Text style={styles.emptyText}>Tus medios estan pendientes de verificacion. Necesitas uno verificado para entrar.</Text> : null}
-      <PrimaryButton label="Aceptar" onPress={accept} disabled={!selected} />
+      <PrimaryButton label={loading ? 'Ingresando...' : 'Aceptar'} onPress={accept} disabled={!selected || loading} />
     </Screen>
   );
 }
@@ -874,6 +901,7 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
   const [addresses, setAddresses] = useState<any[]>([]);
   const [shipments, setShipments] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
+  const [addressFormOpen, setAddressFormOpen] = useState(false);
   const [form, setForm] = useState({ titulo: '', direccion: '', ciudad: '', pais: '', predeterminada: true });
   useEffect(() => {
     api.addresses(session.userId).then(setAddresses).catch(() => setAddresses([]));
@@ -881,10 +909,12 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
   }, [session.userId]);
   const openNewAddress = () => {
     setEditing(null);
+    setAddressFormOpen(true);
     setForm({ titulo: '', direccion: '', ciudad: '', pais: '', predeterminada: addresses.length === 0 });
   };
   const openEditAddress = (address: any) => {
     setEditing(address);
+    setAddressFormOpen(true);
     setForm({
       titulo: address.title,
       direccion: address.direccion ?? address.title,
@@ -913,6 +943,7 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
         return form.predeterminada ? next.map((item) => ({ ...item, tag: item.id === saved.id ? 'PREDETERMINADA' : 'VERIFICADA', predeterminada: item.id === saved.id })) : next;
       });
       setEditing(null);
+      setAddressFormOpen(false);
       setForm({ titulo: '', direccion: '', ciudad: '', pais: '', predeterminada: false });
       Alert.alert('Dirección guardada', 'Los datos se guardaron correctamente.');
     } catch (error) {
@@ -929,7 +960,7 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
         <Text style={styles.sectionTitle}>Direcciones de entrega</Text>
         <Pressable onPress={openNewAddress}><Text style={styles.addText}>+ AÑADIR</Text></Pressable>
       </View>
-      {(editing || form.titulo || form.direccion) ? (
+      {addressFormOpen ? (
         <View style={styles.formCard}>
           <Field label="Nombre de dirección" value={form.titulo} onChangeText={(value: string) => setForm((current) => ({ ...current, titulo: value }))} />
           <Field label="Dirección" value={form.direccion} onChangeText={(value: string) => setForm((current) => ({ ...current, direccion: value }))} />
@@ -940,6 +971,7 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
             <Text style={styles.description}>Usar como dirección predeterminada</Text>
           </Pressable>
           <PrimaryButton label="Guardar dirección" onPress={saveAddress} />
+          <Pressable onPress={() => { setAddressFormOpen(false); setEditing(null); }} style={styles.cancelButton}><Text style={styles.cancelText}>Cancelar</Text></Pressable>
         </View>
       ) : null}
       {addresses.map((address) => (

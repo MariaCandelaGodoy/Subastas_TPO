@@ -161,7 +161,14 @@ export const api = {
     });
     return mapUser({ token: '', user: { ...created, nombre: `${payload.nombre} ${payload.apellido}`, email: payload.email, categoria: 'comun', admitido: 'no', direccion: payload.domicilio, pais: payload.pais } });
   },
-  auctions: async () => (await request<any[]>('/auctions')).map(mapAuction),
+  auctions: async (userId?: number) => (await request<any[]>(`/auctions${userId ? `?clienteId=${userId}` : ''}`)).map(mapAuction),
+  setFavorite: async (userId: number, auctionId: number, favorite: boolean) => {
+    await request('/favorites', {
+      method: favorite ? 'POST' : 'DELETE',
+      body: JSON.stringify({ cliente_id: userId, subasta_id: auctionId }),
+    });
+    return favorite;
+  },
   updateAuctionCover: (auctionId: number, payload: { imagen: string; mimeType?: string; descripcion?: string }) =>
     request(`/auctions/${auctionId}/cover`, { method: 'PUT', body: JSON.stringify(payload) }),
   auction: async (id: number, userId?: number) => {
@@ -277,7 +284,17 @@ export const api = {
     }));
   },
   addAddress: async (payload: Record<string, unknown>) => {
-    const item = await request<any>('/shipping/addresses', { method: 'POST', body: JSON.stringify(payload) });
+    const item = await request<any>('/shipping/addresses', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: payload.userId,
+        titulo: payload.titulo,
+        direccion: payload.direccion,
+        ciudad: payload.ciudad,
+        pais: payload.pais,
+        predeterminada: payload.predeterminada,
+      }),
+    });
     return {
       id: item.id,
       title: item.titulo,
@@ -290,7 +307,17 @@ export const api = {
     };
   },
   updateAddress: async (id: number, payload: Record<string, unknown>) => {
-    const item = await request<any>(`/shipping/addresses/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    const item = await request<any>(`/shipping/addresses/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        user_id: payload.userId,
+        titulo: payload.titulo,
+        direccion: payload.direccion,
+        ciudad: payload.ciudad,
+        pais: payload.pais,
+        predeterminada: payload.predeterminada,
+      }),
+    });
     return {
       id: item.id,
       title: item.titulo,

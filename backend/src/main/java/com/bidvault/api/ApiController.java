@@ -90,8 +90,8 @@ public class ApiController {
                                       @RequestParam(required = false) String tab,
                                       @RequestParam(required = false) String q) {
     String sql = """
-        SELECT s.identificador id, c.descripcion titulo, s.fecha, s.hora, s.estado, s.categoria,
-               s.ubicacion, MIN(i.precioBase) precio_desde, sp.imagen imagen_portada,
+        SELECT s.identificador id, c.descripcion titulo, s.fecha, s.hora, s.categoria,
+               s.ubicacion, COALESCE(se.estado_app, s.estado) estado, MIN(i.precioBase) precio_desde, sp.imagen imagen_portada,
                CASE WHEN s.categoria IN ('oro','platino') THEN 'USD' ELSE 'ARS' END moneda,
                COUNT(i.identificador) piezas,
                EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta = s.identificador AND f.cliente = COALESCE(?, -1)) favorito
@@ -99,8 +99,9 @@ public class ApiController {
         JOIN catalogos c ON c.subasta = s.identificador
         JOIN itemsCatalogo i ON i.catalogo = c.identificador
         LEFT JOIN subastas_portadas sp ON sp.subasta = s.identificador
+        LEFT JOIN subastas_estados_app se ON se.subasta = s.identificador
         WHERE (? IS NULL OR c.descripcion LIKE CONCAT('%', ?, '%'))
-        GROUP BY s.identificador, c.descripcion, s.fecha, s.hora, s.estado, s.categoria, s.ubicacion, sp.imagen
+        GROUP BY s.identificador, c.descripcion, s.fecha, s.hora, COALESCE(se.estado_app, s.estado), s.categoria, s.ubicacion, sp.imagen
         ORDER BY s.fecha, s.hora
         """;
     return jdbc.queryForList(sql, clienteId, q, q);
@@ -110,12 +111,13 @@ public class ApiController {
   Map<String, Object> auction(@PathVariable int id, @RequestParam(required = false) Integer clienteId) {
     var rows = jdbc.queryForList("""
         SELECT s.identificador id, c.identificador catalogo_id, c.descripcion titulo, s.fecha, s.hora,
-               s.estado, s.categoria, s.ubicacion, s.capacidadAsistentes, s.tieneDeposito, s.seguridadPropia,
+               COALESCE(se.estado_app, s.estado) estado, s.categoria, s.ubicacion, s.capacidadAsistentes, s.tieneDeposito, s.seguridadPropia,
                sp.imagen imagen_portada,
                p.nombre subastador, EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta=s.identificador AND f.cliente=COALESCE(?, -1)) favorito
         FROM subastas s
         JOIN catalogos c ON c.subasta = s.identificador
         LEFT JOIN subastas_portadas sp ON sp.subasta = s.identificador
+        LEFT JOIN subastas_estados_app se ON se.subasta = s.identificador
         LEFT JOIN personas p ON p.identificador = s.subastador
         WHERE s.identificador = ?
         """, clienteId, id);
@@ -290,7 +292,7 @@ public class ApiController {
     var base = one("""
         SELECT p.nombre, c.categoria, c.admitido,
                (SELECT COUNT(*) FROM asistentes a WHERE a.cliente=c.identificador) subastas_asistidas,
-               (SELECT COUNT(*) FROM registroDeSubasta r WHERE r.cliente=c.identificador) subastas_ganadas,
+               (SELECT COUNT(*) FROM pujos pu JOIN asistentes a ON a.identificador=pu.asistente WHERE a.cliente=c.identificador AND pu.ganador='si') subastas_ganadas,
                (SELECT COUNT(*) FROM pujos pu JOIN asistentes a ON a.identificador=pu.asistente WHERE a.cliente=c.identificador) pujas_realizadas,
                (SELECT COALESCE(SUM(r.importe + r.comision), 0) FROM registroDeSubasta r WHERE r.cliente=c.identificador) total_pagado
         FROM clientes c JOIN personas p ON p.identificador=c.identificador
@@ -468,7 +470,7 @@ public class ApiController {
     var row = rows.get(0);
     if (!"si".equals(row.get("admitido"))) throw new ApiException(HttpStatus.FORBIDDEN, "Cliente no admitido");
     if (rank(row.get("cliente_categoria").toString()) < rank(row.get("subasta_categoria").toString())) {
-      throw new ApiException(HttpStatus.FORBIDDEN, "La categoría del cliente no habilita esta subasta");
+      throw new ApiException(HttpStatus.FORBIDDEN, "Tu categoria no tiene permiso para ingresar a esta subasta");
     }
     if (requirePayment && ((Number) row.get("pago_ok")).intValue() == 0) {
       throw new ApiException(HttpStatus.FORBIDDEN, "Se requiere al menos un medio de pago verificado");

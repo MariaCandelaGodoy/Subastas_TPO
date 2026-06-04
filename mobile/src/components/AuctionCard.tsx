@@ -5,7 +5,17 @@ import { AuctionSummary } from '../api/client';
 import { RankBadge } from './Chrome';
 import { colors, shadow } from '../theme/theme';
 
-export function AuctionCard({ auction, onPress, registered }: { auction: AuctionSummary; onPress: () => void; registered: boolean }) {
+export function AuctionCard({
+  auction,
+  onPress,
+  onFavorite,
+  registered,
+}: {
+  auction: AuctionSummary;
+  onPress: () => void;
+  onFavorite?: () => void;
+  registered: boolean;
+}) {
   return (
     <Pressable onPress={onPress} style={styles.card}>
       <View style={styles.media}>
@@ -20,7 +30,16 @@ export function AuctionCard({ auction, onPress, registered }: { auction: Auction
       <View style={styles.body}>
         <View style={styles.titleRow}>
           <Text style={styles.title}>{auction.titulo}</Text>
-          <Ionicons name="heart-outline" size={22} color={colors.burgundy} />
+          <Pressable
+            onPress={(event) => {
+              event.stopPropagation();
+              onFavorite?.();
+            }}
+            hitSlop={10}
+            style={styles.favoriteButton}
+          >
+            <Ionicons name={auction.favorito ? 'heart' : 'heart-outline'} size={24} color={colors.burgundy} />
+          </Pressable>
         </View>
         <Text style={styles.description}>{auction.descripcion}</Text>
         <View style={styles.metaRow}>
@@ -98,6 +117,12 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontSize: 21,
     fontWeight: '800',
+  },
+  favoriteButton: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   description: {
     color: colors.muted,
