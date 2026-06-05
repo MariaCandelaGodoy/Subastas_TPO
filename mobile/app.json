@@ -12,8 +12,12 @@
       "backgroundColor": "#E7DFC7",
       "resizeMode": "contain"
     },
-    "assetBundlePatterns": ["**/*"],
-    "ios": { "supportsTablet": true },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/bidvault-logo.png",
@@ -22,6 +26,9 @@
     },
     "extra": {
       "apiUrl": "http://localhost:8080/api"
-    }
+    },
+    "plugins": [
+      "expo-asset"
+    ]
   }
 }

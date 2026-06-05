@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -25,6 +26,8 @@ public class ApiController {
   private final PasswordEncoder encoder;
   private final EmailService emailService;
   private static final SecureRandom RANDOM = new SecureRandom();
+  private static final Pattern NAME_PATTERN = Pattern.compile("^[\\p{L}]+(?:[ '\\-][\\p{L}]+)*$");
+  private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$", Pattern.CASE_INSENSITIVE);
 
   public ApiController(JdbcTemplate jdbc, PasswordEncoder encoder, EmailService emailService) {
     this.jdbc = jdbc;
@@ -66,6 +69,14 @@ public class ApiController {
     require(request.email(), "El email es obligatorio");
     require(request.documento(), "El documento es obligatorio");
     require(request.direccion(), "El domicilio es obligatorio");
+    validateName(request.nombre(), "El nombre no puede contener números ni caracteres inválidos");
+    validateName(request.apellido(), "El apellido no puede contener números ni caracteres inválidos");
+    validateEmail(request.email());
+    String email = request.email().trim().toLowerCase();
+    if (!jdbc.queryForList("SELECT identificador FROM usuarios_app WHERE email=?", email).isEmpty()) {
+      throw new ApiException(HttpStatus.CONFLICT, "Ya existe una cuenta registrada con ese correo electrónico.");
+    }
+    int numeroPais = resolveCountry(request.pais(), request.numeroPais());
 
     int personaId = insertAndReturnKey(
         "INSERT INTO personas (documento, nombre, direccion, estado) VALUES (?, ?, ?, 'activo')",
@@ -73,23 +84,28 @@ public class ApiController {
     jdbc.update("""
         INSERT INTO clientes (identificador, numeroPais, admitido, categoria, verificador)
         VALUES (?, ?, 'no', 'comun', 1)
-        """, personaId, request.numeroPais() == null ? 32 : request.numeroPais());
+        """, personaId, numeroPais);
     jdbc.update("""
         INSERT INTO duenios (identificador, numeroPais, `verificaciónFinanciera`, `verificaciónJudicial`, calificacionRiesgo, verificador)
         VALUES (?, ?, 'no', 'no', 6, 1)
-        """, personaId, request.numeroPais() == null ? 32 : request.numeroPais());
+        """, personaId, numeroPais);
     String fullName = request.nombre().trim() + " " + request.apellido().trim();
     String temporaryPassword = temporaryPassword();
     jdbc.update("""
         INSERT INTO usuarios_app (persona, email, password_hash, password_temporal, rol)
         VALUES (?, ?, ?, 'si', 'cliente')
-        """, personaId, request.email().trim().toLowerCase(), encoder.encode(temporaryPassword));
+        """, personaId, email, encoder.encode(temporaryPassword));
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         VALUES (?, 'Registrado', 'Su registro fue recibido. Le enviaremos un correo cuando la validación se complete.', 'importante')
         """, personaId);
-    emailService.sendTemporaryPassword(request.email().trim().toLowerCase(), fullName, temporaryPassword);
+    emailService.sendTemporaryPassword(email, fullName, temporaryPassword);
     return Map.of("persona_id", personaId, "estado", "pendiente_validacion");
+  }
+
+  @GetMapping("/countries")
+  List<Map<String, Object>> countries() {
+    return jdbc.queryForList("SELECT numero, nombre, nombreCorto FROM paises ORDER BY nombre");
   }
 
   @GetMapping("/auctions")
@@ -98,7 +114,13 @@ public class ApiController {
                                       @RequestParam(required = false) String q) {
     String sql = """
         SELECT s.identificador id, c.descripcion titulo, s.fecha, s.hora, s.categoria,
-               s.ubicacion, COALESCE(se.estado_app, s.estado) estado, MIN(i.precioBase) precio_desde, sp.imagen imagen_portada,
+               s.ubicacion,
+               CASE
+                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE() THEN 'abierta'
+                 WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
+                 ELSE 'programada'
+               END estado,
+               MIN(i.precioBase) precio_desde, sp.imagen imagen_portada,
                CASE WHEN s.categoria IN ('oro','platino') THEN 'USD' ELSE 'ARS' END moneda,
                COUNT(i.identificador) piezas,
                EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta = s.identificador AND f.cliente = COALESCE(?, -1)) favorito
@@ -108,7 +130,13 @@ public class ApiController {
         LEFT JOIN subastas_portadas sp ON sp.subasta = s.identificador
         LEFT JOIN subastas_estados_app se ON se.subasta = s.identificador
         WHERE (? IS NULL OR c.descripcion LIKE CONCAT('%', ?, '%'))
-        GROUP BY s.identificador, c.descripcion, s.fecha, s.hora, COALESCE(se.estado_app, s.estado), s.categoria, s.ubicacion, sp.imagen
+        GROUP BY s.identificador, c.descripcion, s.fecha, s.hora,
+                 CASE
+                   WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE() THEN 'abierta'
+                   WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
+                   ELSE 'programada'
+                 END,
+                 s.categoria, s.ubicacion, sp.imagen
         ORDER BY s.fecha, s.hora
         """;
     return jdbc.queryForList(sql, clienteId, q, q);
@@ -118,7 +146,12 @@ public class ApiController {
   Map<String, Object> auction(@PathVariable int id, @RequestParam(required = false) Integer clienteId) {
     var rows = jdbc.queryForList("""
         SELECT s.identificador id, c.identificador catalogo_id, c.descripcion titulo, s.fecha, s.hora,
-               COALESCE(se.estado_app, s.estado) estado, s.categoria, s.ubicacion, s.capacidadAsistentes, s.tieneDeposito, s.seguridadPropia,
+               CASE
+                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE() THEN 'abierta'
+                 WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
+                 ELSE 'programada'
+               END estado,
+               s.categoria, s.ubicacion, s.capacidadAsistentes, s.tieneDeposito, s.seguridadPropia,
                sp.imagen imagen_portada,
                p.nombre subastador, EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta=s.identificador AND f.cliente=COALESCE(?, -1)) favorito
         FROM subastas s
@@ -350,6 +383,23 @@ public class ApiController {
     return updated;
   }
 
+  @PutMapping("/profile/{clienteId}/password")
+  @Transactional
+  Map<String, Object> updatePassword(@PathVariable int clienteId, @RequestBody UpdatePasswordRequest request) {
+    require(request.password(), "La nueva contraseña es obligatoria");
+    jdbc.update("UPDATE usuarios_app SET password_hash=?, password_temporal='no' WHERE persona=?",
+        encoder.encode(request.password()), clienteId);
+    return one("""
+        SELECT p.identificador persona_id, p.nombre, p.direccion, u.email, u.password_temporal,
+               c.categoria, c.admitido,
+               CASE WHEN p.foto IS NULL THEN NULL ELSE CONCAT('data:image/jpeg;base64,', TO_BASE64(p.foto)) END foto_uri
+        FROM personas p
+        JOIN usuarios_app u ON u.persona = p.identificador
+        LEFT JOIN clientes c ON c.identificador = p.identificador
+        WHERE p.identificador=?
+        """, "Cliente no encontrado", clienteId);
+  }
+
   @GetMapping("/notifications/{clienteId}")
   List<Map<String, Object>> notifications(@PathVariable int clienteId) {
     return jdbc.queryForList("SELECT * FROM mensajes WHERE cliente=? ORDER BY creado_en DESC", clienteId);
@@ -525,6 +575,31 @@ public class ApiController {
     if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) throw new ApiException(HttpStatus.BAD_REQUEST, message);
   }
 
+  private void validateName(String value, String message) {
+    if (!NAME_PATTERN.matcher(value.trim()).matches()) throw new ApiException(HttpStatus.BAD_REQUEST, message);
+  }
+
+  private void validateEmail(String value) {
+    if (!EMAIL_PATTERN.matcher(value.trim()).matches()) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "El correo electrónico no tiene un formato válido");
+    }
+  }
+
+  private int resolveCountry(String pais, Integer numeroPais) {
+    if (numeroPais != null) {
+      var byNumber = jdbc.queryForList("SELECT numero FROM paises WHERE numero=?", numeroPais);
+      if (!byNumber.isEmpty()) return numeroPais;
+    }
+    require(pais, "El país es obligatorio");
+    var rows = jdbc.queryForList("""
+        SELECT numero
+        FROM paises
+        WHERE LOWER(nombre)=LOWER(?) OR LOWER(nombreCorto)=LOWER(?)
+        """, pais.trim(), pais.trim());
+    if (rows.isEmpty()) throw new ApiException(HttpStatus.BAD_REQUEST, "El país ingresado no es válido");
+    return ((Number) rows.get(0).get("numero")).intValue();
+  }
+
   private int rank(String category) {
     return switch (category) {
       case "comun" -> 1;
@@ -587,7 +662,7 @@ public class ApiController {
   }
 
   public record LoginRequest(String email, String password) {}
-  public record RegisterRequest(String nombre, String apellido, String email, String password, String documento, String direccion, Integer numeroPais) {}
+  public record RegisterRequest(String nombre, String apellido, String email, String password, String documento, String direccion, String pais, Integer numeroPais) {}
   public record ClientRequest(int clienteId) {}
   public record JoinAuctionRequest(int clienteId, int medioPagoId) {}
   public record BidRequest(int clienteId, int itemId, BigDecimal importe) {}
@@ -595,6 +670,7 @@ public class ApiController {
   public record FavoriteRequest(int clienteId, int subastaId) {}
   public record SellRequest(int duenioId, String titulo, String descripcion, String historia, List<String> fotos) {}
   public record UpdateProfileRequest(String nombre, String apellido, String email, String password, String direccion, String pais, String fotoBase64, String fotoUri) {}
+  public record UpdatePasswordRequest(String password) {}
   public record AddressRequest(int userId, String titulo, String direccion, String ciudad, String pais, String predeterminada) {}
   public record ShipmentRequest(int userId, int addressId) {}
   public record AuctionCoverRequest(String imagen, String mimeType, String descripcion) {}

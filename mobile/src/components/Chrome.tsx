@@ -18,7 +18,7 @@ export function RankBadge({ category }: { category?: string }) {
   const key = category.toUpperCase();
   const source = rankBadges[key];
   if (!source) return <Text style={styles.badge}>{key}</Text>;
-  return <Image source={source} style={styles.rankBadge} resizeMode="contain" />;
+  return <Image source={source} style={[styles.rankBadge, key === 'ORO' && styles.rankBadgeOro]} resizeMode="contain" />;
 }
 
 export function Header({ name, category, onSettings }: { name?: string; category?: string; onSettings?: () => void }) {
@@ -92,7 +92,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '800',
   },
-  rankBadge: { width: 58, height: 24 },
+  rankBadge: { width: 66, height: 24 },
+  rankBadgeOro: { width: 96, height: 36 },
   gearButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   tabs: {
     position: 'absolute',

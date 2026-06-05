@@ -36,7 +36,7 @@ INSERT INTO seguros (nroPoliza, compania, polizaCombinada, importe) VALUES
 ('POL-US-2001', 'Vault Insurance', 'no', 3000.00);
 
 INSERT INTO subastas (identificador, fecha, hora, estado, subastador, ubicacion, capacidadAsistentes, tieneDeposito, seguridadPropia, categoria) VALUES
-(1, DATE_ADD(CURDATE(), INTERVAL 20 DAY), '09:45:00', 'abierta', 2, 'Bóveda Norte, CABA', 120, 'si', 'si', 'plata'),
+(1, CURDATE(), '09:45:00', 'abierta', 2, 'Bóveda Norte, CABA', 120, 'si', 'si', 'plata'),
 (2, DATE_ADD(CURDATE(), INTERVAL 43 DAY), '11:15:00', 'abierta', 2, 'Centro Automotor San Isidro', 80, 'si', 'si', 'platino'),
 (3, DATE_ADD(CURDATE(), INTERVAL 35 DAY), '13:30:00', 'abierta', 2, 'Sala Auditorio Sur', 160, 'no', 'si', 'comun'),
 (4, DATE_ADD(CURDATE(), INTERVAL 52 DAY), '16:00:00', 'abierta', 2, 'Salón Central', 100, 'si', 'si', 'oro');

@@ -1,4 +1,16 @@
-export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080/api';
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+
+function resolveApiUrl() {
+  if (process.env.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
+  if (Platform.OS === 'web') return 'http://localhost:8080/api';
+
+  const hostUri = Constants.expoConfig?.hostUri ?? Constants.manifest2?.extra?.expoGo?.debuggerHost;
+  const host = hostUri?.split(':')[0];
+  return host ? `http://${host}:8080/api` : 'http://localhost:8080/api';
+}
+
+export const API_URL = resolveApiUrl();
 
 if (__DEV__) {
   console.info(`BidVault API: ${API_URL}`);
@@ -16,6 +28,12 @@ export type UserSession = {
   categoria: string;
   admitido: boolean;
   passwordTemporal: boolean;
+};
+
+export type Country = {
+  numero: number;
+  nombre: string;
+  nombreCorto: string;
 };
 
 export type AuctionSummary = {
@@ -55,21 +73,30 @@ export type AuctionDetail = {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     response = await fetch(`${API_URL}${path}`, {
       ...options,
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         ...(options.headers ?? {}),
       },
     });
-  } catch {
-    throw new Error(`No se pudo conectar con el backend en ${API_URL}. Verifica que Spring Boot este levantado y que Expo use la IP correcta.`);
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === 'AbortError';
+    if (aborted) {
+      throw new Error(`El backend no respondió en ${API_URL}. Verificá que Spring Boot esté levantado.`);
+    }
+    throw new Error(`No se pudo conectar con el backend en ${API_URL}. Verificá que Spring Boot esté levantado y que Expo use la IP correcta.`);
+  } finally {
+    clearTimeout(timeout);
   }
   const body = await response.text();
   const payload = body ? JSON.parse(body) : null;
   if (!response.ok) {
-    throw new Error(payload?.error ?? payload?.message ?? 'No pudimos completar la operacion.');
+    throw new Error(payload?.error ?? payload?.message ?? 'No pudimos completar la operación.');
   }
   return payload as T;
 }
@@ -157,10 +184,14 @@ export const api = {
         email: payload.email,
         documento: payload.documento,
         direccion: payload.domicilio,
-        numero_pais: 32,
+        pais: payload.pais,
       }),
     });
     return created;
+  },
+  countries: async () => {
+    const rows = await request<any[]>('/countries');
+    return rows.map((item) => ({ numero: Number(item.numero), nombre: item.nombre, nombreCorto: item.nombre_corto ?? item.nombreCorto })) as Country[];
   },
   auctions: async (userId?: number) => (await request<any[]>(`/auctions${userId ? `?clienteId=${userId}` : ''}`)).map(mapAuction),
   setFavorite: async (userId: number, auctionId: number, favorite: boolean) => {
@@ -247,6 +278,13 @@ export const api = {
         foto_base64: payload.fotoBase64 || null,
         foto_uri: payload.fotoUri || null,
       }),
+    });
+    return mapUser({ token: '', user: updated });
+  },
+  changePassword: async (userId: number, password: string) => {
+    const updated = await request<any>(`/profile/${userId}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({ password }),
     });
     return mapUser({ token: '', user: updated });
   },

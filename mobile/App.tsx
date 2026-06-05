@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { api, AuctionDetail, AuctionSummary, ProductItem, UserSession } from './src/api/client';
+import { api, AuctionDetail, AuctionSummary, Country, ProductItem, UserSession } from './src/api/client';
 import { AuctionCard } from './src/components/AuctionCard';
 import { BottomTabs, Header, RankBadge, TabKey } from './src/components/Chrome';
 import { Screen } from './src/components/Screen';
@@ -147,17 +147,55 @@ function LoginScreen({ onLogin, onRegister, onGuest, onTerms }: { onLogin: (user
 
 function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => void }) {
   const [form, setForm] = useState({ nombre: '', apellido: '', documento: '', email: '', domicilio: '', pais: '' });
+  const [countries, setCountries] = useState<Country[]>([]);
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  useEffect(() => {
+    api.countries().then(setCountries).catch(() => setCountries([]));
+  }, []);
 
   const submit = async () => {
+    setErrorMessage('');
+    const namePattern = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+(?:[ '-][A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)*$/;
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!namePattern.test(form.nombre.trim())) {
+      const message = 'El nombre no debe contener números ni caracteres inválidos.';
+      setErrorMessage(message);
+      Alert.alert('Nombre inválido', message);
+      return;
+    }
+    if (!namePattern.test(form.apellido.trim())) {
+      const message = 'El apellido no debe contener números ni caracteres inválidos.';
+      setErrorMessage(message);
+      Alert.alert('Apellido inválido', message);
+      return;
+    }
+    if (!emailPattern.test(form.email.trim())) {
+      const message = 'Ingresá un correo electrónico con formato válido.';
+      setErrorMessage(message);
+      Alert.alert('Email inválido', message);
+      return;
+    }
+    const countryOk = countries.some((country) => {
+      const value = form.pais.trim().toLowerCase();
+      return country.nombre.toLowerCase() === value || country.nombreCorto.toLowerCase() === value;
+    });
+    if (!countryOk) {
+      const message = countries.length ? `Elegí un país válido: ${countries.map((item) => item.nombre).join(', ')}.` : 'No pudimos validar el país contra la base de datos.';
+      setErrorMessage(message);
+      Alert.alert('País inválido', message);
+      return;
+    }
     setLoading(true);
     try {
       await api.register(form);
       Alert.alert('Registrado', 'Te enviamos una contraseña temporal por correo. Inicia sesion con esa clave para cambiarla.');
       onDone();
     } catch (error) {
-      Alert.alert('Error', error instanceof Error ? error.message : 'Revisa los campos obligatorios.');
+      const message = error instanceof Error ? error.message : 'Revisá los campos obligatorios.';
+      setErrorMessage(message);
+      Alert.alert('Error', message);
     } finally {
       setLoading(false);
     }
@@ -173,6 +211,8 @@ function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => 
       <Field label="Email *" value={form.email} onChangeText={(value: string) => update('email', value)} autoCapitalize="none" />
       <Field label="Domicilio *" value={form.domicilio} onChangeText={(value: string) => update('domicilio', value)} />
       <Field label="Pais *" value={form.pais} onChangeText={(value: string) => update('pais', value)} />
+      {countries.length ? <Text style={styles.helperText}>Países válidos: {countries.map((item) => item.nombre).join(', ')}</Text> : null}
+      {errorMessage ? <Text style={styles.formError}>{errorMessage}</Text> : null}
       <View style={styles.photoBox}><Ionicons name="camera-outline" size={26} color={colors.burgundy} /><Text style={styles.photoText}>Foto frente y dorso del DNI</Text></View>
       <PrimaryButton label={loading ? 'Enviando...' : 'Aceptar'} onPress={submit} disabled={loading} />
     </Screen>
@@ -891,6 +931,22 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
       setSaving(false);
     }
   };
+  const saveTemporaryPassword = async () => {
+    if (!form.password.trim()) {
+      Alert.alert('Cambiar contraseña', 'Ingresá una nueva contraseña para continuar.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await api.changePassword(session.userId, form.password);
+      onSaved(updated);
+      Alert.alert('Contraseña actualizada', 'Ya podés continuar usando BidVault.', [{ text: 'Aceptar', onPress: onBack }]);
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos cambiar la contraseña.');
+    } finally {
+      setSaving(false);
+    }
+  };
   if (session.passwordTemporal) {
     return (
       <Screen style={styles.configScreen}>
@@ -899,7 +955,7 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
           <Text style={styles.passwordChangeTitle}>Cambiar contraseña</Text>
           <Text style={styles.description}>Ingresaste con una contraseña temporal. Para continuar, definí una nueva contraseña.</Text>
           <Field label="Nueva contraseña *" value={form.password} onChangeText={(value: string) => update('password', value)} secureTextEntry />
-          <PrimaryButton label={saving ? 'Guardando...' : 'Aceptar'} onPress={save} disabled={saving} />
+          <PrimaryButton label={saving ? 'Guardando...' : 'Aceptar'} onPress={saveTemporaryPassword} disabled={saving} />
         </View>
       </Screen>
     );
@@ -1224,6 +1280,8 @@ const styles = StyleSheet.create({
   fieldLabel: { color: colors.ink, fontWeight: '800', marginBottom: 6 },
   inputRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.white, borderColor: colors.linen, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12 },
   input: { flex: 1, color: colors.ink, fontSize: 16, minHeight: 48 },
+  helperText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: -8, marginBottom: 12 },
+  formError: { color: colors.burgundy, fontSize: 13, fontWeight: '700', lineHeight: 18, marginTop: -4, marginBottom: 12 },
   primaryButton: { backgroundColor: colors.burgundy, minHeight: 52, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 8, ...shadow },
   primaryText: { color: colors.cream, fontWeight: '900', fontSize: 16 },
   link: { color: colors.burgundy, fontWeight: '900', textAlign: 'center', marginTop: 16 },
