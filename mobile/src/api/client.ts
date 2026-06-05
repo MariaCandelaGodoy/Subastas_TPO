@@ -15,6 +15,7 @@ export type UserSession = {
   fotoUri?: string;
   categoria: string;
   admitido: boolean;
+  passwordTemporal: boolean;
 };
 
 export type AuctionSummary = {
@@ -92,6 +93,7 @@ function mapUser(payload: any): UserSession {
     fotoUri: raw.foto_uri ?? raw.fotoUri,
     categoria: String(raw.categoria ?? '').toUpperCase(),
     admitido: raw.admitido === true || raw.admitido === 'si',
+    passwordTemporal: raw.password_temporal === true || raw.password_temporal === 'si',
   };
 }
 
@@ -153,13 +155,12 @@ export const api = {
         nombre: payload.nombre,
         apellido: payload.apellido,
         email: payload.email,
-        password: payload.password,
         documento: payload.documento,
         direccion: payload.domicilio,
         numero_pais: 32,
       }),
     });
-    return mapUser({ token: '', user: { ...created, nombre: `${payload.nombre} ${payload.apellido}`, email: payload.email, categoria: 'comun', admitido: 'no', direccion: payload.domicilio, pais: payload.pais } });
+    return created;
   },
   auctions: async (userId?: number) => (await request<any[]>(`/auctions${userId ? `?clienteId=${userId}` : ''}`)).map(mapAuction),
   setFavorite: async (userId: number, auctionId: number, favorite: boolean) => {

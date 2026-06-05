@@ -2,6 +2,7 @@ package com.bidvault.api;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.security.SecureRandom;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.util.Base64;
@@ -22,10 +23,13 @@ import org.springframework.web.bind.annotation.*;
 public class ApiController {
   private final JdbcTemplate jdbc;
   private final PasswordEncoder encoder;
+  private final EmailService emailService;
+  private static final SecureRandom RANDOM = new SecureRandom();
 
-  public ApiController(JdbcTemplate jdbc, PasswordEncoder encoder) {
+  public ApiController(JdbcTemplate jdbc, PasswordEncoder encoder, EmailService emailService) {
     this.jdbc = jdbc;
     this.encoder = encoder;
+    this.emailService = emailService;
   }
 
   @GetMapping("/health")
@@ -74,14 +78,17 @@ public class ApiController {
         INSERT INTO duenios (identificador, numeroPais, `verificaciónFinanciera`, `verificaciónJudicial`, calificacionRiesgo, verificador)
         VALUES (?, ?, 'no', 'no', 6, 1)
         """, personaId, request.numeroPais() == null ? 32 : request.numeroPais());
+    String fullName = request.nombre().trim() + " " + request.apellido().trim();
+    String temporaryPassword = temporaryPassword();
     jdbc.update("""
         INSERT INTO usuarios_app (persona, email, password_hash, password_temporal, rol)
         VALUES (?, ?, ?, 'si', 'cliente')
-        """, personaId, request.email().trim().toLowerCase(), encoder.encode(request.password() == null ? "Temporal123" : request.password()));
+        """, personaId, request.email().trim().toLowerCase(), encoder.encode(temporaryPassword));
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         VALUES (?, 'Registrado', 'Su registro fue recibido. Le enviaremos un correo cuando la validación se complete.', 'importante')
         """, personaId);
+    emailService.sendTemporaryPassword(request.email().trim().toLowerCase(), fullName, temporaryPassword);
     return Map.of("persona_id", personaId, "estado", "pendiente_validacion");
   }
 
@@ -332,7 +339,7 @@ public class ApiController {
       jdbc.update("UPDATE personas SET foto=? WHERE identificador=?", Base64.getDecoder().decode(clean), clienteId);
     }
     var updated = one("""
-        SELECT p.identificador persona_id, p.nombre, p.direccion, u.email,
+        SELECT p.identificador persona_id, p.nombre, p.direccion, u.email, u.password_temporal,
                c.categoria, c.admitido,
                CASE WHEN p.foto IS NULL THEN NULL ELSE CONCAT('data:image/jpeg;base64,', TO_BASE64(p.foto)) END foto_uri
         FROM personas p
@@ -527,6 +534,15 @@ public class ApiController {
       case "platino" -> 5;
       default -> 0;
     };
+  }
+
+  private String temporaryPassword() {
+    String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    StringBuilder value = new StringBuilder("BV-");
+    for (int i = 0; i < 8; i++) {
+      value.append(alphabet.charAt(RANDOM.nextInt(alphabet.length())));
+    }
+    return value.toString();
   }
 
   private void ensureAddressTable() {

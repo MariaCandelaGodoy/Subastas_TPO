@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api, AuctionDetail, AuctionSummary, ProductItem, UserSession } from './src/api/client';
@@ -42,13 +42,13 @@ function BidVaultApp() {
 
   const openApp = (user: UserSession) => {
     setSession(user);
-    setRoute('app');
+    setRoute(user.passwordTemporal ? 'editProfile' : 'app');
   };
 
   if (route === 'splash') return <SplashScreen />;
   if (route === 'login') return <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'terms') return <TermsScreen onBack={() => setRoute('login')} />;
-  if (route === 'register') return <RegisterScreen onDone={openApp} onBack={() => setRoute('login')} />;
+  if (route === 'register') return <RegisterScreen onDone={() => setRoute('login')} onBack={() => setRoute('login')} />;
   if (route === 'auction' && selectedAuction) {
     return <AuctionLiveScreen auctionId={selectedAuction} session={session} onBack={() => setRoute('app')} onPayments={() => { setPaymentBackRoute('auction'); setRoute('payments'); }} />;
   }
@@ -145,17 +145,17 @@ function LoginScreen({ onLogin, onRegister, onGuest, onTerms }: { onLogin: (user
   );
 }
 
-function RegisterScreen({ onDone, onBack }: { onDone: (user: UserSession) => void; onBack: () => void }) {
-  const [form, setForm] = useState({ nombre: '', apellido: '', documento: '', email: '', password: '', domicilio: '', pais: '' });
+function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => void }) {
+  const [form, setForm] = useState({ nombre: '', apellido: '', documento: '', email: '', domicilio: '', pais: '' });
   const [loading, setLoading] = useState(false);
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
 
   const submit = async () => {
     setLoading(true);
     try {
-      const user = await api.register(form);
-      Alert.alert('Registrado', 'Su registro fue exitoso. La validación quedó pendiente de aprobación.');
-      onDone(user);
+      await api.register(form);
+      Alert.alert('Registrado', 'Te enviamos una contraseña temporal por correo. Inicia sesion con esa clave para cambiarla.');
+      onDone();
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'Revisa los campos obligatorios.');
     } finally {
@@ -171,7 +171,6 @@ function RegisterScreen({ onDone, onBack }: { onDone: (user: UserSession) => voi
       <Field label="Apellido *" value={form.apellido} onChangeText={(value: string) => update('apellido', value)} />
       <Field label="Documento *" value={form.documento} onChangeText={(value: string) => update('documento', value)} keyboardType="numeric" />
       <Field label="Email *" value={form.email} onChangeText={(value: string) => update('email', value)} autoCapitalize="none" />
-      <Field label="Contraseña *" value={form.password} onChangeText={(value: string) => update('password', value)} secureTextEntry />
       <Field label="Domicilio *" value={form.domicilio} onChangeText={(value: string) => update('domicilio', value)} />
       <Field label="Pais *" value={form.pais} onChangeText={(value: string) => update('pais', value)} />
       <View style={styles.photoBox}><Ionicons name="camera-outline" size={26} color={colors.burgundy} /><Text style={styles.photoText}>Foto frente y dorso del DNI</Text></View>
@@ -229,6 +228,7 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
   const [auctions, setAuctions] = useState<AuctionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<AuctionFilter>('EN_VIVO');
+  const [categoryFilter, setCategoryFilter] = useState<string>('TODAS');
   const [query, setQuery] = useState('');
   const [ascending, setAscending] = useState(true);
 
@@ -258,9 +258,10 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
       ? auctions.filter((a) => a.favorito)
       : auctions.filter((a) => a.estado === filter);
     return filteredByTab
+      .filter((a) => categoryFilter === 'TODAS' || a.categoria === categoryFilter)
       .filter((a) => !normalized || `${a.titulo} ${a.descripcion} ${a.categoria} ${a.moneda}`.toLowerCase().includes(normalized))
       .sort((a, b) => ascending ? a.precioDesde - b.precioDesde : b.precioDesde - a.precioDesde);
-  }, [auctions, filter, query, ascending]);
+  }, [auctions, filter, categoryFilter, query, ascending]);
 
   return (
     <Screen>
@@ -276,11 +277,21 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
         <Ionicons name="search" size={24} color={colors.ink} />
       </View>
       <View style={styles.toolRow}>
-        <Pressable onPress={() => setQuery('')}><Text style={styles.toolPill}>Filtrar</Text></Pressable>
+        <Pressable onPress={() => setCategoryFilter((current) => {
+          const categories = ['TODAS', 'COMUN', 'ESPECIAL', 'PLATA', 'ORO', 'PLATINO'];
+          return categories[(categories.indexOf(current) + 1) % categories.length];
+        })}>
+          <Text style={[styles.toolPill, categoryFilter !== 'TODAS' && styles.toolPillActive]}>
+            {categoryFilter === 'TODAS' ? 'Filtrar' : categoryFilter}
+          </Text>
+        </Pressable>
         <Pressable onPress={() => setAscending((value) => !value)}>
           <Text style={styles.toolPill}>{ascending ? 'Ordenar asc' : 'Ordenar desc'}</Text>
         </Pressable>
       </View>
+      {categoryFilter !== 'TODAS' ? (
+        <Pressable onPress={() => setCategoryFilter('TODAS')}><Text style={styles.clearFilter}>Quitar filtro de categoria</Text></Pressable>
+      ) : null}
       <View style={styles.segment}>
         {(['EN_VIVO', 'FAVORITAS', 'PROGRAMADA'] as const).map((item) => (
           <Pressable key={item} onPress={() => setFilter(item)} style={[styles.segmentItem, filter === item && styles.segmentActive]}>
@@ -383,7 +394,7 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
     return (
       <Screen>
         <BackButton onPress={onBack} />
-        <Text style={styles.largeTitle}>Metodos de pago</Text>
+        <Text style={styles.largeTitle}>Métodos de pago</Text>
         <Text style={styles.description}>Necesitas iniciar sesion para gestionar tus medios.</Text>
       </Screen>
     );
@@ -419,7 +430,7 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
   return (
     <Screen>
       <BackButton onPress={onBack} />
-      <Text style={styles.largeTitle}>Metodos de pago</Text>
+      <Text style={styles.largeTitle}>Métodos de pago</Text>
       <View style={styles.toolRow}>
         <Pressable onPress={() => setFormType('TARJETA_CREDITO')}><Text style={styles.toolPill}>+ Tarjeta</Text></Pressable>
         <Pressable onPress={() => setFormType('CHEQUE_CERTIFICADO')}><Text style={styles.toolPill}>+ Cheque</Text></Pressable>
@@ -466,7 +477,7 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
     setSelected(item.id);
   };
   const accept = async () => {
-    if (!selected) return Alert.alert('Metodo requerido', 'Selecciona un medio verificado para dejar constancia de capacidad de pago.');
+    if (!selected) return Alert.alert('Método requerido', 'Selecciona un medio verificado para dejar constancia de capacidad de pago.');
     try {
       setLoading(true);
       await api.selectAuctionPayment({ userId: session.userId, auctionId, paymentMethodId: selected });
@@ -481,7 +492,7 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
   };
   return (
     <Screen style={styles.configScreen}>
-      <ConfigHeader title="Metodos de pago" onBack={onBack} />
+      <ConfigHeader title="Métodos de pago" onBack={onBack} />
       <Text style={styles.sectionTitle}>Tarjetas</Text>
       {items.filter((i) => String(i.tipo).includes('TARJETA')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => selectPayment(item)} />)}
       <Text style={styles.sectionTitle}>Cheques</Text>
@@ -627,7 +638,7 @@ function ProfileScreen({ session, onMetrics, onSettings }: { session: UserSessio
           <Text style={styles.nextText}>Subastas ganadas: <Text style={styles.nextStrong}>{metrics.ganadas}</Text></Text>
         </View>
       ) : null}
-      <PrimaryButton label="Ver mis metricas" onPress={onMetrics} />
+      <PrimaryButton label="Ver mis métricas" onPress={onMetrics} />
       <View style={styles.profileTabs}>
         {(['GANADAS', 'PARTICIPADAS'] as const).map((item) => (
           <Pressable key={item} onPress={() => setProfileTab(item)} style={[styles.profileTab, profileTab === item && styles.profileTabActive]}>
@@ -668,7 +679,7 @@ function CoordinateShippingScreen({ session, onBack, onDone }: { session: UserSe
       <Text style={styles.paymentIntro}>Seleccione metodo de envio</Text>
       <Text style={styles.sectionTitle}>Envio a domicilio</Text>
       {addresses.map((address) => <SelectableAddress key={address.id} title={address.direccion} subtitle={`${address.ciudad}, ${address.pais}`} selected={selected === address.id} onPress={() => setSelected(address.id)} />)}
-      {addresses.length === 0 ? <Text style={styles.emptyText}>No tenes direcciones cargadas. Agregalas desde Configuracion / Envios.</Text> : null}
+      {addresses.length === 0 ? <Text style={styles.emptyText}>No tenes direcciones cargadas. Agregalas desde Configuración / Envíos.</Text> : null}
       <PrimaryButton label="Aceptar" onPress={accept} />
     </Screen>
   );
@@ -712,7 +723,7 @@ function MetricsScreen({ session, onBack }: { session: UserSession; onBack: () =
   const data = metrics ?? { asistidas: 0, ganadas: 0, totalOfertado: 0, totalPagado: 0, exitoPlatino: 0, exitoOro: 0, exitoPlata: 0, exitoEspecial: 0, exitoComun: 0 };
   return (
     <Screen style={styles.configScreen}>
-      <ConfigHeader title="Mis metricas" onBack={onBack} />
+      <ConfigHeader title="Mis métricas" onBack={onBack} />
       <View style={styles.metricsCards}>
         <MetricBox label="ASISTIDAS" value={String(data.asistidas)} />
         <MetricBox label="GANADAS" value={String(data.ganadas)} accent />
@@ -809,6 +820,13 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
   });
   const [saving, setSaving] = useState(false);
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  const leave = () => {
+    if (session.passwordTemporal) {
+      Alert.alert('Cambiar contraseña', 'Primero debes cambiar la contraseña temporal.');
+      return;
+    }
+    onBack();
+  };
   const changePhoto = async () => {
     if (Platform.OS === 'web') {
       const input = document.createElement('input');
@@ -858,6 +876,10 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
       Alert.alert('Campos obligatorios', 'Completá nombre, apellido, email, domicilio y país.');
       return;
     }
+    if (session.passwordTemporal && !form.password.trim()) {
+      Alert.alert('Cambiar contraseña', 'Debes cambiar la contraseña temporal antes de continuar.');
+      return;
+    }
     setSaving(true);
     try {
       const updated = await api.updateProfile(session.userId, form);
@@ -869,9 +891,22 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
       setSaving(false);
     }
   };
+  if (session.passwordTemporal) {
+    return (
+      <Screen style={styles.configScreen}>
+        <ConfigHeader title="Cambiar contraseña" onBack={leave} />
+        <View style={styles.formCard}>
+          <Text style={styles.passwordChangeTitle}>Cambiar contraseña</Text>
+          <Text style={styles.description}>Ingresaste con una contraseña temporal. Para continuar, definí una nueva contraseña.</Text>
+          <Field label="Nueva contraseña *" value={form.password} onChangeText={(value: string) => update('password', value)} secureTextEntry />
+          <PrimaryButton label={saving ? 'Guardando...' : 'Aceptar'} onPress={save} disabled={saving} />
+        </View>
+      </Screen>
+    );
+  }
   return (
     <Screen style={styles.configScreen}>
-      <ConfigHeader title="Editar perfil" onBack={onBack} />
+      <ConfigHeader title="Editar perfil" onBack={leave} />
       <View style={styles.profilePhotoWrap}>
         <Pressable onPress={changePhoto} style={styles.profilePhoto}>
           <Image source={form.fotoUri ? { uri: form.fotoUri } : require('./assets/user-avatar.png')} style={styles.profilePhotoImage} />
@@ -884,15 +919,16 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
         <Field label="Nombre" value={form.nombre} onChangeText={(value: string) => update('nombre', value)} />
         <Field label="Apellido" value={form.apellido} onChangeText={(value: string) => update('apellido', value)} />
         <Field label="Email" value={form.email} onChangeText={(value: string) => update('email', value)} autoCapitalize="none" />
-        <Field label="Contrasena" value={form.password} onChangeText={(value: string) => update('password', value)} placeholder="Dejar vacia para no cambiar" secureTextEntry />
         <Field label="Domicilio" value={form.domicilio} onChangeText={(value: string) => update('domicilio', value)} />
         <Field label="Pais" value={form.pais} onChangeText={(value: string) => update('pais', value)} />
+        <Text style={styles.passwordChangeTitle}>Cambiar contraseña</Text>
+        <Field label={session.passwordTemporal ? 'Nueva contraseña *' : 'Nueva contraseña'} value={form.password} onChangeText={(value: string) => update('password', value)} placeholder={session.passwordTemporal ? 'Obligatoria por primer ingreso' : 'Dejar vacia para no cambiar'} secureTextEntry />
         <Text style={styles.dniLabel}>Saque foto al frente y dorso del DNI</Text>
         <View style={styles.dniPhoto}><Ionicons name="camera-outline" size={28} color={colors.gold} /></View>
         <View style={styles.dniPhoto}><Ionicons name="camera-outline" size={28} color={colors.gold} /></View>
       </View>
       <PrimaryButton label={saving ? 'Guardando...' : 'Aceptar'} onPress={save} disabled={saving} />
-      <Pressable onPress={onBack} style={styles.cancelButton}><Text style={styles.cancelText}>Cancelar</Text></Pressable>
+      <Pressable onPress={leave} style={styles.cancelButton}><Text style={styles.cancelText}>Cancelar</Text></Pressable>
     </Screen>
   );
 }
@@ -955,7 +991,7 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
   };
   return (
     <Screen style={styles.configScreen}>
-      <ConfigHeader title="Envios" onBack={onBack} />
+      <ConfigHeader title="Envíos" onBack={onBack} />
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionTitle}>Direcciones de entrega</Text>
         <Pressable onPress={openNewAddress}><Text style={styles.addText}>+ AÑADIR</Text></Pressable>
@@ -979,7 +1015,7 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
           <AddressCard title={address.title} subtitle={address.subtitle} tag={address.tag} selected={address.tag === 'PREDETERMINADA'} />
         </Pressable>
       ))}
-      <Text style={styles.sectionTitle}>Envios en curso</Text>
+      <Text style={styles.sectionTitle}>Envíos en curso</Text>
       {shipments.filter((shipment) => shipment.estado !== 'entregado').map((shipment) => (
         <View key={shipment.id} style={styles.shipmentCard}>
           <Text style={styles.shipmentTitle}>{shipment.producto}</Text>
@@ -1224,6 +1260,7 @@ const styles = StyleSheet.create({
   toolRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginBottom: 12 },
   toolPill: { backgroundColor: colors.linen, color: colors.muted, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 4, fontSize: 12 },
   toolPillActive: { backgroundColor: colors.burgundy, color: colors.cream },
+  clearFilter: { color: colors.burgundy, fontWeight: '900', textAlign: 'right', marginBottom: 10 },
   segment: { flexDirection: 'row', backgroundColor: colors.linen, borderRadius: 8, padding: 4, marginBottom: 18 },
   segmentItem: { flex: 1, minHeight: 38, justifyContent: 'center', alignItems: 'center', borderRadius: 6 },
   segmentActive: { backgroundColor: colors.white },
@@ -1337,6 +1374,7 @@ const styles = StyleSheet.create({
   editPhotoBadge: { width: 34, height: 34, borderRadius: 4, backgroundColor: colors.burgundy, alignItems: 'center', justifyContent: 'center', marginTop: -20, marginLeft: 68 },
   changePhoto: { color: colors.muted, fontSize: 10, fontWeight: '900' },
   sectionTitle: { color: colors.ink, fontSize: 20, fontWeight: '900', marginBottom: 12 },
+  passwordChangeTitle: { color: colors.danger, fontSize: 18, fontWeight: '900', marginBottom: 8, marginTop: 10 },
   formCard: { backgroundColor: colors.cream, borderRadius: 8, padding: 16, marginBottom: 16, ...shadow },
   dniLabel: { color: colors.ink, marginBottom: 8, fontWeight: '700' },
   dniPhoto: { width: 64, height: 58, borderRadius: 6, borderWidth: 1, borderColor: colors.gold, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
@@ -1368,3 +1406,4 @@ const styles = StyleSheet.create({
   pieceInfo: { color: colors.ink, width: '46%', fontSize: 11, lineHeight: 16, marginBottom: 8 },
   liveBadge: { alignSelf: 'center', backgroundColor: colors.burgundy, color: colors.cream, paddingHorizontal: 14, paddingVertical: 5, fontWeight: '900', marginTop: -46, marginBottom: 26 },
 });
+
