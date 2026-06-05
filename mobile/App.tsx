@@ -7,7 +7,7 @@ import { BottomTabs, Header, RankBadge, TabKey } from './src/components/Chrome';
 import { Screen } from './src/components/Screen';
 import { colors, shadow } from './src/theme/theme';
 
-type Route = 'splash' | 'login' | 'register' | 'terms' | 'app' | 'auction' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'shipmentDetail' | 'myPieces' | 'metrics';
+type Route = 'splash' | 'login' | 'register' | 'terms' | 'app' | 'auction' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'purchaseInvoice' | 'shipmentDetail' | 'myPieces' | 'metrics';
 type AuctionFilter = 'EN_VIVO' | 'FAVORITAS' | 'PROGRAMADA';
 
 export default function App() {
@@ -24,7 +24,9 @@ function BidVaultApp() {
   const [session, setSession] = useState<UserSession | null>(null);
   const [selectedAuction, setSelectedAuction] = useState<number | null>(null);
   const [selectedShipment, setSelectedShipment] = useState<any | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [paymentBackRoute, setPaymentBackRoute] = useState<Route>('settings');
+  const [termsBackRoute, setTermsBackRoute] = useState<Route>('login');
 
   const requireSession = (next: () => void) => {
     if (!session) {
@@ -46,8 +48,8 @@ function BidVaultApp() {
   };
 
   if (route === 'splash') return <SplashScreen />;
-  if (route === 'login') return <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
-  if (route === 'terms') return <TermsScreen onBack={() => setRoute('login')} />;
+  if (route === 'login') return <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => { setTermsBackRoute('login'); setRoute('terms'); }} />;
+  if (route === 'terms') return <TermsScreen onBack={() => setRoute(termsBackRoute)} />;
   if (route === 'register') return <RegisterScreen onDone={() => setRoute('login')} onBack={() => setRoute('login')} />;
   if (route === 'auction' && selectedAuction) {
     return <AuctionLiveScreen auctionId={selectedAuction} session={session} onBack={() => setRoute('app')} onPayments={() => { setPaymentBackRoute('auction'); setRoute('payments'); }} />;
@@ -56,7 +58,8 @@ function BidVaultApp() {
   if (route === 'payments') return <PaymentsScreen session={session} onBack={() => setRoute(paymentBackRoute)} />;
   if (route === 'editProfile') return session ? <EditProfileScreen session={session} onBack={() => setRoute('settings')} onSaved={(updated) => setSession({ ...session, ...updated, token: session.token })} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'shipping') return session ? <ShippingScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
-  if (route === 'coordinateShipping') return session ? <CoordinateShippingScreen session={session} onBack={() => setRoute('app')} onDone={(shipment) => { setSelectedShipment(shipment); setRoute('shipmentDetail'); }} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'coordinateShipping') return session ? <CoordinateShippingScreen session={session} onBack={() => setRoute('app')} onDone={(shipment) => { setSelectedShipment(shipment); setSelectedInvoice(shipment); setRoute('purchaseInvoice'); }} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'purchaseInvoice') return session ? <PurchaseInvoiceScreen session={session} invoice={selectedInvoice} onBack={() => setRoute('shipping')} onDone={() => setRoute('shipmentDetail')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'shipmentDetail') return session ? <ShipmentDetailScreen session={session} shipment={selectedShipment} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'myPieces') return session ? <MyPiecesScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'metrics') return session ? <MetricsScreen session={session} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
@@ -68,6 +71,7 @@ function BidVaultApp() {
         onPayments={() => requireSession(() => { setPaymentBackRoute('settings'); setRoute('payments'); })}
         onShipping={() => requireSession(() => setRoute('shipping'))}
         onMyPieces={() => requireSession(() => setRoute('myPieces'))}
+        onTerms={() => { setTermsBackRoute('settings'); setRoute('terms'); }}
         onLogout={() => { setSession(null); setRoute('login'); }}
       />
     );
@@ -146,7 +150,7 @@ function LoginScreen({ onLogin, onRegister, onGuest, onTerms }: { onLogin: (user
 }
 
 function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => void }) {
-  const [form, setForm] = useState({ nombre: '', apellido: '', documento: '', email: '', domicilio: '', pais: '' });
+  const [form, setForm] = useState({ nombre: '', apellido: '', documento: '', email: '', domicilio: '', pais: '', dniFrenteBase64: '', dniDorsoBase64: '', dniFrenteUri: '', dniDorsoUri: '' });
   const [countries, setCountries] = useState<Country[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -187,6 +191,12 @@ function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => 
       Alert.alert('País inválido', message);
       return;
     }
+    if (!form.dniFrenteBase64 || !form.dniDorsoBase64) {
+      const message = 'Subí la foto del frente y del dorso del DNI para simular la verificación.';
+      setErrorMessage(message);
+      Alert.alert('Fotos del DNI requeridas', message);
+      return;
+    }
     setLoading(true);
     try {
       await api.register(form);
@@ -199,6 +209,50 @@ function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => 
     } finally {
       setLoading(false);
     }
+  };
+  const pickDniPhoto = async (side: 'frente' | 'dorso') => {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const value = String(reader.result);
+          const base64 = value.includes(',') ? value.split(',')[1] : value;
+          setForm((current) => ({
+            ...current,
+            [side === 'frente' ? 'dniFrenteUri' : 'dniDorsoUri']: value,
+            [side === 'frente' ? 'dniFrenteBase64' : 'dniDorsoBase64']: base64,
+          }));
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+      return;
+    }
+
+    const ImagePicker = require('expo-image-picker');
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permiso requerido', 'Necesitamos permiso para seleccionar las fotos del DNI.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.75,
+      base64: true,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    setForm((current) => ({
+      ...current,
+      [side === 'frente' ? 'dniFrenteUri' : 'dniDorsoUri']: asset.uri,
+      [side === 'frente' ? 'dniFrenteBase64' : 'dniDorsoBase64']: asset.base64 ?? '',
+    }));
   };
 
   return (
@@ -213,7 +267,17 @@ function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => 
       <Field label="Pais *" value={form.pais} onChangeText={(value: string) => update('pais', value)} />
       {countries.length ? <Text style={styles.helperText}>Países válidos: {countries.map((item) => item.nombre).join(', ')}</Text> : null}
       {errorMessage ? <Text style={styles.formError}>{errorMessage}</Text> : null}
-      <View style={styles.photoBox}><Ionicons name="camera-outline" size={26} color={colors.burgundy} /><Text style={styles.photoText}>Foto frente y dorso del DNI</Text></View>
+      <Text style={styles.dniRegisterLabel}>Fotos del DNI para verificación</Text>
+      <View style={styles.dniRegisterRow}>
+        <Pressable style={styles.dniRegisterPhoto} onPress={() => pickDniPhoto('frente')}>
+          {form.dniFrenteUri ? <Image source={{ uri: form.dniFrenteUri }} style={styles.dniRegisterImage} /> : <Ionicons name="camera-outline" size={26} color={colors.burgundy} />}
+          <Text style={styles.dniRegisterText}>{form.dniFrenteUri ? 'Frente cargado' : 'Subir frente'}</Text>
+        </Pressable>
+        <Pressable style={styles.dniRegisterPhoto} onPress={() => pickDniPhoto('dorso')}>
+          {form.dniDorsoUri ? <Image source={{ uri: form.dniDorsoUri }} style={styles.dniRegisterImage} /> : <Ionicons name="camera-outline" size={26} color={colors.burgundy} />}
+          <Text style={styles.dniRegisterText}>{form.dniDorsoUri ? 'Dorso cargado' : 'Subir dorso'}</Text>
+        </Pressable>
+      </View>
       <PrimaryButton label={loading ? 'Enviando...' : 'Aceptar'} onPress={submit} disabled={loading} />
     </Screen>
   );
@@ -563,7 +627,7 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [days, setDays] = useState('7');
-  const [photos, setPhotos] = useState<Array<{ uri: string; name: string }>>([]);
+  const [photos, setPhotos] = useState<Array<{ uri: string; name: string; dataUri: string }>>([]);
   const [declared, setDeclared] = useState(true);
   const pickPhotos = async () => {
     if (Platform.OS === 'web') {
@@ -573,7 +637,14 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
       input.multiple = true;
       input.onchange = () => {
         const files = Array.from(input.files ?? []);
-        setPhotos(files.map((file, index) => ({ uri: URL.createObjectURL(file), name: `foto-${Date.now()}-${index}-${file.name}` })));
+        Promise.all(files.map((file, index) => new Promise<{ uri: string; name: string; dataUri: string }>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUri = String(reader.result);
+            resolve({ uri: dataUri, name: `foto-${Date.now()}-${index}-${file.name}`, dataUri });
+          };
+          reader.readAsDataURL(file);
+        }))).then(setPhotos);
       };
       input.click();
       return;
@@ -585,9 +656,14 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
       quality: 0.75,
+      base64: true,
     });
     if (result.canceled) return;
-    setPhotos(result.assets.map((asset: any, index: number) => ({ uri: asset.uri, name: `foto-${Date.now()}-${index}.jpg` })));
+    setPhotos(result.assets.map((asset: any, index: number) => ({
+      uri: asset.uri,
+      name: `foto-${Date.now()}-${index}.jpg`,
+      dataUri: asset.base64 ? `data:${asset.mimeType ?? 'image/jpeg'};base64,${asset.base64}` : asset.uri,
+    })));
   };
   const submit = async () => {
     if (!session) return Alert.alert('Inicie sesion', 'Necesitas una cuenta para subir un objeto.');
@@ -599,7 +675,7 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
         titulo: title,
         descripcion: description,
         precioBasePretendido: Number(price),
-        fotos: photos.map((photo) => photo.name),
+        fotos: photos.map((photo) => photo.dataUri),
         cantidadFotos: photos.length,
         declaracionPropiedad: true,
         aceptaDevolucionConCargo: true,
@@ -618,7 +694,7 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
       <SimpleTitleHeader title="Nuevo objeto" />
       <View style={styles.uploadPanel}>
         <Field label="Titulo" value={title} onChangeText={setTitle} />
-        <Field label="Descripcion" value={description} onChangeText={setDescription} multiline placeholder="Detalles sobre la historia, condicion, caracteristicas..." />
+        <Field label="Descripcion" value={description} onChangeText={setDescription} multiline placeholder="Condicion, caracteristicas y detalles relevantes..." />
         <Field label="Precio base" value={price} onChangeText={setPrice} keyboardType="numeric" placeholder="0.00" />
         <Field label="Duracion" value={days} onChangeText={setDays} keyboardType="numeric" placeholder="CANT. DIAS" />
         <Pressable style={styles.photoBox} onPress={pickPhotos}><Ionicons name="images-outline" size={26} color={colors.burgundy} /><Text style={styles.photoText}>{photos.length ? `${photos.length} fotos seleccionadas` : 'Subir al menos 6 fotos'}</Text></Pressable>
@@ -644,13 +720,13 @@ function NotificationsScreen({ session, onSettings, onCoordinate, onTrack }: { s
     <Screen>
       <SimpleTitleHeader title="Notificaciones" />
       {items.map((item) => (
-        <View key={item.id} style={styles.notification}>
+        <Pressable key={item.id} onPress={String(item.titulo).includes('Ganaste') ? onCoordinate : undefined} style={styles.notification}>
           <Text style={styles.notificationTitle}>{item.titulo}</Text>
           <Text style={styles.description}>{item.mensaje}</Text>
-          {String(item.titulo).includes('Ganaste') ? <Pressable onPress={onCoordinate}><Text style={styles.notifAction}>Coordinar envio</Text></Pressable> : null}
+          {String(item.titulo).includes('Ganaste') ? <Text style={styles.notifAction}>Coordinar envio</Text> : null}
           {String(item.titulo).includes('Producto') ? <Pressable onPress={onTrack}><Text style={styles.notifAction}>Seguir envio</Text></Pressable> : null}
           <Text style={styles.dateText}>{item.importante ? 'Importante' : 'Otra'} • {new Date(item.creadoEn).toLocaleString()}</Text>
-        </View>
+        </Pressable>
       ))}
       {!session ? <Text style={styles.description}>Inicia sesion para ver tus notificaciones privadas.</Text> : null}
     </Screen>
@@ -696,12 +772,14 @@ function ProfileScreen({ session, onMetrics, onSettings }: { session: UserSessio
 
 function CoordinateShippingScreen({ session, onBack, onDone }: { session: UserSession; onBack: () => void; onDone: (shipment: any) => void }) {
   const [addresses, setAddresses] = useState<any[]>([]);
+  const [pending, setPending] = useState<any[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   useEffect(() => {
     api.addresses(session.userId).then((data: any) => {
       setAddresses(data);
       setSelected(data.find((a: any) => a.predeterminada)?.id ?? data[0]?.id ?? null);
     });
+    api.pendingShippingPurchases(session.userId).then((data: any) => setPending(data)).catch(() => setPending([]));
   }, [session.userId]);
   const accept = async () => {
     if (!selected) return Alert.alert('Direccion requerida', 'Selecciona una direccion.');
@@ -716,12 +794,84 @@ function CoordinateShippingScreen({ session, onBack, onDone }: { session: UserSe
   return (
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Coordinar envio" onBack={onBack} />
+      {pending[0] ? (
+        <View style={styles.invoiceCard}>
+          {pending[0].imagen ? <Image source={{ uri: pending[0].imagen }} style={styles.invoiceImage} /> : null}
+          <Text style={styles.invoiceProduct}>{pending[0].producto}</Text>
+          <Text style={styles.description}>{pending[0].descripcion}</Text>
+          <Text style={styles.invoiceTotal}>Total estimado: ${Number(pending[0].total ?? 0).toLocaleString()}</Text>
+        </View>
+      ) : null}
       <Text style={styles.paymentIntro}>Seleccione metodo de envio</Text>
       <Text style={styles.sectionTitle}>Envio a domicilio</Text>
       {addresses.map((address) => <SelectableAddress key={address.id} title={address.direccion} subtitle={`${address.ciudad}, ${address.pais}`} selected={selected === address.id} onPress={() => setSelected(address.id)} />)}
       {addresses.length === 0 ? <Text style={styles.emptyText}>No tenes direcciones cargadas. Agregalas desde Configuración / Envíos.</Text> : null}
       <PrimaryButton label="Aceptar" onPress={accept} />
     </Screen>
+  );
+}
+
+function PurchaseInvoiceScreen({ session, invoice, onBack, onDone }: { session: UserSession; invoice: any | null; onBack: () => void; onDone: () => void }) {
+  const [payments, setPayments] = useState<any[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [paying, setPaying] = useState(false);
+  useEffect(() => {
+    api.payments(session.userId).then((data: any) => {
+      setPayments(data);
+      setSelected(data.find((item: any) => item.estado === 'VERIFICADO')?.id ?? null);
+    });
+  }, [session.userId]);
+  const invoiceId = Number(invoice?.factura_id ?? invoice?.id ?? 0);
+  const subtotal = Number(invoice?.factura_subtotal ?? invoice?.subtotal ?? invoice?.importe ?? 0);
+  const commission = Number(invoice?.factura_comision ?? invoice?.comision ?? 0);
+  const shipping = Number(invoice?.factura_envio ?? invoice?.costo_envio ?? 0);
+  const total = Number(invoice?.factura_total ?? invoice?.total ?? subtotal + commission + shipping);
+  const pay = async () => {
+    if (!invoiceId) return Alert.alert('Factura no disponible', 'No pudimos encontrar la factura de esta compra.');
+    const method = payments.find((item) => item.id === selected);
+    if (!method) return Alert.alert('Medio de pago requerido', 'Seleccioná un medio de pago.');
+    if (method.estado !== 'VERIFICADO') return Alert.alert('Medio pendiente', 'Solo podés pagar con medios verificados.');
+    setPaying(true);
+    try {
+      await api.payInvoice(invoiceId, { userId: session.userId, paymentMethodId: selected });
+      Alert.alert('Pago registrado', 'La factura quedó pagada correctamente.', [{ text: 'Aceptar', onPress: onDone }]);
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos registrar el pago.');
+    } finally {
+      setPaying(false);
+    }
+  };
+  return (
+    <Screen style={styles.configScreen}>
+      <ConfigHeader title="Factura de compra" onBack={onBack} />
+      <View style={styles.invoiceCard}>
+        {invoice?.imagen ? <Image source={{ uri: invoice.imagen }} style={styles.invoiceImage} /> : null}
+        <Text style={styles.invoiceNumber}>{invoice?.factura_numero ?? invoice?.numero ?? 'Factura pendiente'}</Text>
+        <Text style={styles.invoiceProduct}>{invoice?.producto ?? 'Compra ganada'}</Text>
+        {invoice?.descripcion ? <Text style={styles.description}>{invoice.descripcion}</Text> : null}
+        {invoice?.direccion ? <Text style={styles.settingsDetail}>Envío: {invoice.direccion}</Text> : null}
+        <InvoiceLine label="Importe adjudicado" value={subtotal} />
+        <InvoiceLine label="Comisión" value={commission} />
+        <InvoiceLine label="Envío" value={shipping} />
+        <View style={styles.invoiceDivider} />
+        <InvoiceLine label="Total" value={total} strong />
+      </View>
+      <Text style={styles.sectionTitle}>Método de pago</Text>
+      {payments.map((item) => (
+        <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => setSelected(item.id)} />
+      ))}
+      {payments.length === 0 ? <Text style={styles.emptyText}>No tenés métodos de pago cargados.</Text> : null}
+      <PrimaryButton label={paying ? 'Pagando...' : 'Pagar factura'} onPress={pay} disabled={paying} />
+    </Screen>
+  );
+}
+
+function InvoiceLine({ label, value, strong }: { label: string; value: number; strong?: boolean }) {
+  return (
+    <View style={styles.invoiceLine}>
+      <Text style={[styles.invoiceLineLabel, strong && styles.invoiceLineStrong]}>{label}</Text>
+      <Text style={[styles.invoiceLineValue, strong && styles.invoiceLineStrong]}>${value.toLocaleString()}</Text>
+    </View>
   );
 }
 
@@ -823,12 +973,13 @@ function formatCompact(value: number) {
   return String(value);
 }
 
-function SettingsScreen({ onBack, onEditProfile, onPayments, onShipping, onMyPieces, onLogout }: {
+function SettingsScreen({ onBack, onEditProfile, onPayments, onShipping, onMyPieces, onTerms, onLogout }: {
   onBack: () => void;
   onEditProfile: () => void;
   onPayments: () => void;
   onShipping: () => void;
   onMyPieces: () => void;
+  onTerms: () => void;
   onLogout: () => void;
 }) {
   return (
@@ -839,6 +990,7 @@ function SettingsScreen({ onBack, onEditProfile, onPayments, onShipping, onMyPie
         <ConfigTile icon="card" title="Método de pago" onPress={onPayments} />
         <ConfigTile icon="cart" title="Envíos" onPress={onShipping} />
         <ConfigTile icon="archive" title="Mis piezas" onPress={onMyPieces} />
+        <ConfigTile icon="document-text" title="Términos y condiciones" onPress={onTerms} />
         <Pressable onPress={onLogout} style={styles.logoutButton}>
           <Text style={styles.logoutText}>CERRAR SESIÓN</Text>
         </Pressable>
@@ -992,12 +1144,14 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
 function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () => void }) {
   const [addresses, setAddresses] = useState<any[]>([]);
   const [shipments, setShipments] = useState<any[]>([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
   const [addressFormOpen, setAddressFormOpen] = useState(false);
   const [form, setForm] = useState({ titulo: '', direccion: '', ciudad: '', pais: '', predeterminada: true });
   useEffect(() => {
     api.addresses(session.userId).then(setAddresses).catch(() => setAddresses([]));
     api.shipments(session.userId).then((data: any) => setShipments(data)).catch(() => setShipments([]));
+    api.invoices(session.userId).then((data: any) => setInvoices(data)).catch(() => setInvoices([]));
   }, [session.userId]);
   const openNewAddress = () => {
     setEditing(null);
@@ -1082,6 +1236,15 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
         </View>
       ))}
       {shipments.filter((shipment) => shipment.estado !== 'entregado').length === 0 ? <Text style={styles.emptyText}>No hay envíos en curso en la base.</Text> : null}
+      <Text style={styles.sectionTitle}>Facturas</Text>
+      {invoices.map((invoice) => (
+        <View key={invoice.id} style={styles.invoiceMiniCard}>
+          <Text style={styles.historyTitle}>{invoice.numero}</Text>
+          <Text style={styles.settingsDetail}>{invoice.producto}</Text>
+          <Text style={styles.invoiceTotal}>${Number(invoice.total ?? 0).toLocaleString()} • {String(invoice.estado).toUpperCase()}</Text>
+        </View>
+      ))}
+      {invoices.length === 0 ? <Text style={styles.emptyText}>No hay facturas registradas en la base.</Text> : null}
       <Text style={styles.sectionTitle}>Historial de envios</Text>
       {shipments.filter((shipment) => shipment.estado === 'entregado').map((shipment) => (
         <View key={shipment.id} style={styles.historyItem}>
@@ -1116,7 +1279,6 @@ function MyPiecesScreen({ session, onBack }: { session: UserSession; onBack: () 
   return (
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Mis piezas" onBack={onBack} />
-      <Text style={styles.description}>Esta sección corresponde a solicitudes_productos y solicitudes_fotos; cuando una pieza aceptada entra a catálogo se relaciona con productos, itemsCatalogo, catalogos y subastas.</Text>
       <View style={styles.searchBox}>
         <TextInput value={query} onChangeText={setQuery} placeholder="Buscador" placeholderTextColor={colors.muted} style={styles.searchInput} />
         <Ionicons name="search" size={20} color={colors.ink} />
@@ -1224,7 +1386,7 @@ function AddressCard({ title, subtitle, tag, selected }: { title: string; subtit
 function PieceRequestCard({ piece }: { piece: any }) {
   return (
     <View style={styles.pieceCard}>
-      {piece.foto?.startsWith('http') ? <Image source={{ uri: piece.foto }} style={styles.pieceImage} /> : <View style={styles.pieceImagePlaceholder}><Ionicons name="image-outline" size={38} color={colors.gold} /></View>}
+      {piece.foto ? <Image source={{ uri: piece.foto }} style={styles.pieceImage} /> : <View style={styles.pieceImagePlaceholder}><Ionicons name="image-outline" size={38} color={colors.gold} /></View>}
       <Text style={styles.pieceTitle}>{piece.titulo}</Text>
       <Text style={styles.description}>{piece.descripcion}</Text>
       <Text style={styles.verified}>Estado: {String(piece.estado).replace('_', ' ').toUpperCase()}</Text>
@@ -1282,6 +1444,11 @@ const styles = StyleSheet.create({
   input: { flex: 1, color: colors.ink, fontSize: 16, minHeight: 48 },
   helperText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: -8, marginBottom: 12 },
   formError: { color: colors.burgundy, fontSize: 13, fontWeight: '700', lineHeight: 18, marginTop: -4, marginBottom: 12 },
+  dniRegisterLabel: { color: colors.ink, fontSize: 14, fontWeight: '900', marginBottom: 8 },
+  dniRegisterRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  dniRegisterPhoto: { flex: 1, minHeight: 116, borderRadius: 8, borderWidth: 1, borderColor: colors.gold, backgroundColor: colors.cream, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 8 },
+  dniRegisterImage: { position: 'absolute', width: '100%', height: '100%' },
+  dniRegisterText: { color: colors.burgundy, fontSize: 12, fontWeight: '900', marginTop: 6, backgroundColor: colors.cream, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
   primaryButton: { backgroundColor: colors.burgundy, minHeight: 52, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 8, ...shadow },
   primaryText: { color: colors.cream, fontWeight: '900', fontSize: 16 },
   link: { color: colors.burgundy, fontWeight: '900', textAlign: 'center', marginTop: 16 },
@@ -1312,18 +1479,18 @@ const styles = StyleSheet.create({
   photoPreview: { width: 70, height: 70, borderRadius: 6, backgroundColor: colors.linen },
   uploadPanel: { backgroundColor: colors.cream, borderRadius: 8, padding: 14, marginBottom: 16, ...shadow },
   declarationRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 2 },
-  searchBox: { minHeight: 52, borderRadius: 26, backgroundColor: colors.linen, paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  searchBox: { minHeight: 52, borderRadius: 8, backgroundColor: colors.cream, borderWidth: 1, borderColor: '#D6CCB5', paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, ...shadow },
   searchText: { color: colors.muted, fontSize: 16 },
   searchInput: { flex: 1, minHeight: 46, color: colors.ink, fontSize: 16 },
   toolRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginBottom: 12 },
   toolPill: { backgroundColor: colors.linen, color: colors.muted, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 4, fontSize: 12 },
   toolPillActive: { backgroundColor: colors.burgundy, color: colors.cream },
   clearFilter: { color: colors.burgundy, fontWeight: '900', textAlign: 'right', marginBottom: 10 },
-  segment: { flexDirection: 'row', backgroundColor: colors.linen, borderRadius: 8, padding: 4, marginBottom: 18 },
+  segment: { flexDirection: 'row', backgroundColor: colors.cream, borderRadius: 8, padding: 4, marginBottom: 18, borderWidth: 1, borderColor: '#D6CCB5' },
   segmentItem: { flex: 1, minHeight: 38, justifyContent: 'center', alignItems: 'center', borderRadius: 6 },
-  segmentActive: { backgroundColor: colors.white },
-  segmentText: { color: colors.muted, fontWeight: '800' },
-  segmentTextActive: { color: colors.burgundy },
+  segmentActive: { backgroundColor: colors.burgundy },
+  segmentText: { color: colors.ink, fontWeight: '800', fontSize: 12 },
+  segmentTextActive: { color: colors.cream },
   liveHeader: { gap: 6, marginBottom: 14 },
   liveLabel: { color: colors.danger, fontWeight: '900' },
   liveTitle: { color: colors.burgundy, fontSize: 28, fontWeight: '900' },
@@ -1450,6 +1617,17 @@ const styles = StyleSheet.create({
   shipmentImage: { height: 170, borderRadius: 6, marginBottom: 12 },
   shipmentTitle: { color: colors.ink, fontSize: 20, fontWeight: '900' },
   shipmentMetaRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  invoiceCard: { backgroundColor: colors.cream, borderRadius: 8, padding: 16, marginBottom: 18, ...shadow },
+  invoiceMiniCard: { backgroundColor: colors.cream, borderRadius: 8, padding: 14, marginBottom: 12, borderLeftWidth: 3, borderLeftColor: colors.burgundy },
+  invoiceImage: { width: '100%', height: 180, borderRadius: 6, marginBottom: 12 },
+  invoiceNumber: { color: colors.muted, fontSize: 12, fontWeight: '900', marginBottom: 4 },
+  invoiceProduct: { color: colors.burgundy, fontSize: 22, fontWeight: '900', marginBottom: 8 },
+  invoiceLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 7 },
+  invoiceLineLabel: { color: colors.ink, fontSize: 15, fontWeight: '700' },
+  invoiceLineValue: { color: colors.ink, fontSize: 15, fontWeight: '800' },
+  invoiceLineStrong: { color: colors.burgundy, fontSize: 18, fontWeight: '900' },
+  invoiceDivider: { height: 1, backgroundColor: '#D6CCB5', marginVertical: 8 },
+  invoiceTotal: { color: colors.burgundy, fontSize: 16, fontWeight: '900', marginTop: 8 },
   progressRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14, paddingHorizontal: 20 },
   progressDotActive: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.burgundy },
   progressDot: { width: 14, height: 14, borderRadius: 7, backgroundColor: '#CFC5AA' },

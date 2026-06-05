@@ -3,9 +3,11 @@ USE bidvault;
 
 SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS mensajes;
+DROP TABLE IF EXISTS facturas_compra;
 DROP TABLE IF EXISTS envios;
 DROP TABLE IF EXISTS solicitudes_fotos;
 DROP TABLE IF EXISTS solicitudes_productos;
+DROP TABLE IF EXISTS documentos_verificacion;
 DROP TABLE IF EXISTS favoritos;
 DROP TABLE IF EXISTS sesiones_subasta;
 DROP TABLE IF EXISTS medios_pago;
@@ -90,6 +92,20 @@ CREATE TABLE clientes (
   CONSTRAINT fk_clientes_personas FOREIGN KEY (identificador) REFERENCES personas(identificador),
   CONSTRAINT fk_clientes_empleados FOREIGN KEY (verificador) REFERENCES empleados(identificador),
   CONSTRAINT fk_clientes_paises FOREIGN KEY (numeroPais) REFERENCES paises(numero)
+);
+
+CREATE TABLE documentos_verificacion (
+  identificador INT NOT NULL AUTO_INCREMENT,
+  persona INT NOT NULL,
+  tipo_documento VARCHAR(30) NOT NULL DEFAULT 'DNI',
+  frente LONGBLOB NOT NULL,
+  dorso LONGBLOB NOT NULL,
+  estado VARCHAR(30) NOT NULL DEFAULT 'aprobada_simulada',
+  observacion VARCHAR(250),
+  creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  verificado_en TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT pk_documentos_verificacion PRIMARY KEY (identificador),
+  CONSTRAINT fk_documentos_verificacion_personas FOREIGN KEY (persona) REFERENCES personas(identificador)
 );
 
 CREATE TABLE duenios (
@@ -318,7 +334,6 @@ CREATE TABLE solicitudes_productos (
   duenio INT NOT NULL,
   titulo VARCHAR(160) NOT NULL,
   descripcion TEXT NOT NULL,
-  historia TEXT NULL,
   origen_licito VARCHAR(2) NOT NULL,
   declaracion_propiedad VARCHAR(2) NOT NULL,
   acepta_devolucion_cargo VARCHAR(2) NOT NULL,
@@ -352,6 +367,27 @@ CREATE TABLE envios (
   CONSTRAINT pk_envios PRIMARY KEY (identificador),
   CONSTRAINT chk_envio_estado CHECK (estado IN ('pendiente','despachado','entregado','retiro_personal')),
   CONSTRAINT fk_envios_registro FOREIGN KEY (registro) REFERENCES registroDeSubasta(identificador)
+);
+
+CREATE TABLE facturas_compra (
+  identificador INT NOT NULL AUTO_INCREMENT,
+  registro INT NOT NULL,
+  envio INT,
+  medio_pago INT,
+  numero VARCHAR(30) NOT NULL,
+  subtotal DECIMAL(12,2) NOT NULL,
+  comision DECIMAL(12,2) NOT NULL,
+  costo_envio DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total DECIMAL(12,2) NOT NULL,
+  estado VARCHAR(30) NOT NULL DEFAULT 'pendiente_pago',
+  creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  pagado_en TIMESTAMP NULL,
+  CONSTRAINT pk_facturas_compra PRIMARY KEY (identificador),
+  CONSTRAINT uq_facturas_compra_registro UNIQUE (registro),
+  CONSTRAINT uq_facturas_compra_numero UNIQUE (numero),
+  CONSTRAINT fk_facturas_registro FOREIGN KEY (registro) REFERENCES registroDeSubasta(identificador),
+  CONSTRAINT fk_facturas_envio FOREIGN KEY (envio) REFERENCES envios(identificador),
+  CONSTRAINT fk_facturas_medio_pago FOREIGN KEY (medio_pago) REFERENCES medios_pago(identificador)
 );
 
 CREATE TABLE mensajes (

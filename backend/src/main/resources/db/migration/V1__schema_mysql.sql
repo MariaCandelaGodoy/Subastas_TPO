@@ -282,7 +282,6 @@ CREATE TABLE solicitudes_productos (
   duenio INT NOT NULL,
   titulo VARCHAR(160) NOT NULL,
   descripcion TEXT NOT NULL,
-  historia TEXT NULL,
   origen_licito VARCHAR(2) NOT NULL,
   declaracion_propiedad VARCHAR(2) NOT NULL,
   acepta_devolucion_cargo VARCHAR(2) NOT NULL,

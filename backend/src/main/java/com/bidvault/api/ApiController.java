@@ -69,6 +69,8 @@ public class ApiController {
     require(request.email(), "El email es obligatorio");
     require(request.documento(), "El documento es obligatorio");
     require(request.direccion(), "El domicilio es obligatorio");
+    require(request.dniFrenteBase64(), "La foto del frente del DNI es obligatoria");
+    require(request.dniDorsoBase64(), "La foto del dorso del DNI es obligatoria");
     validateName(request.nombre(), "El nombre no puede contener números ni caracteres inválidos");
     validateName(request.apellido(), "El apellido no puede contener números ni caracteres inválidos");
     validateEmail(request.email());
@@ -83,7 +85,7 @@ public class ApiController {
         request.documento(), request.nombre() + " " + request.apellido(), request.direccion());
     jdbc.update("""
         INSERT INTO clientes (identificador, numeroPais, admitido, categoria, verificador)
-        VALUES (?, ?, 'no', 'comun', 1)
+        VALUES (?, ?, 'si', 'comun', 1)
         """, personaId, numeroPais);
     jdbc.update("""
         INSERT INTO duenios (identificador, numeroPais, `verificaciónFinanciera`, `verificaciónJudicial`, calificacionRiesgo, verificador)
@@ -99,8 +101,12 @@ public class ApiController {
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         VALUES (?, 'Registrado', 'Su registro fue recibido. Le enviaremos un correo cuando la validación se complete.', 'importante')
         """, personaId);
+    jdbc.update("""
+        INSERT INTO documentos_verificacion (persona, tipo_documento, frente, dorso, estado, observacion)
+        VALUES (?, 'DNI', ?, ?, 'aprobada_simulada', 'Validacion simulada desde el registro')
+        """, personaId, decodeBase64Image(request.dniFrenteBase64()), decodeBase64Image(request.dniDorsoBase64()));
     emailService.sendTemporaryPassword(email, fullName, temporaryPassword);
-    return Map.of("persona_id", personaId, "estado", "pendiente_validacion");
+    return Map.of("persona_id", personaId, "estado", "verificacion_aprobada_simulada");
   }
 
   @GetMapping("/countries")
@@ -314,9 +320,9 @@ public class ApiController {
     }
     int id = insertAndReturnKey("""
         INSERT INTO solicitudes_productos
-        (duenio, titulo, descripcion, historia, origen_licito, declaracion_propiedad, acepta_devolucion_cargo, estado)
-        VALUES (?, ?, ?, ?, 'si', 'si', 'si', 'pendiente')
-        """, request.duenioId(), request.titulo(), request.descripcion(), request.historia());
+        (duenio, titulo, descripcion, origen_licito, declaracion_propiedad, acepta_devolucion_cargo, estado)
+        VALUES (?, ?, ?, 'si', 'si', 'si', 'pendiente')
+        """, request.duenioId(), request.titulo(), request.descripcion());
     for (String url : request.fotos()) {
       jdbc.update("INSERT INTO solicitudes_fotos (solicitud, url) VALUES (?, ?)", id, url);
     }
@@ -421,12 +427,49 @@ public class ApiController {
     return jdbc.queryForList("""
         SELECT e.identificador id, e.estado, e.costo, e.codigo_seguimiento tracking,
                e.direccion, r.identificador registro_id, r.importe, r.comision,
-               p.identificador producto_id, p.descripcionCatalogo producto, p.descripcionCompleta descripcion
+               p.identificador producto_id, p.descripcionCatalogo producto, p.descripcionCompleta descripcion,
+               fc.identificador factura_id, fc.numero factura_numero, fc.total factura_total, fc.estado factura_estado,
+               (SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto)) FROM fotos f WHERE f.producto=p.identificador LIMIT 1) imagen
         FROM envios e
         JOIN registroDeSubasta r ON r.identificador = e.registro
         JOIN productos p ON p.identificador = r.producto
+        LEFT JOIN facturas_compra fc ON fc.registro = r.identificador
         WHERE r.cliente=?
         ORDER BY e.identificador DESC
+        """, userId);
+  }
+
+  @GetMapping("/purchases/pending-shipping")
+  List<Map<String, Object>> pendingShippingPurchases(@RequestParam int userId) {
+    return jdbc.queryForList("""
+        SELECT r.identificador registro_id, r.importe, r.comision,
+               (r.importe + r.comision) total,
+               s.identificador subasta_id, ca.descripcion subasta,
+               p.identificador producto_id, p.descripcionCatalogo producto, p.descripcionCompleta descripcion,
+               (SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto)) FROM fotos f WHERE f.producto=p.identificador LIMIT 1) imagen
+        FROM registroDeSubasta r
+        JOIN productos p ON p.identificador = r.producto
+        JOIN subastas s ON s.identificador = r.subasta
+        JOIN catalogos ca ON ca.subasta = s.identificador
+        WHERE r.cliente=?
+          AND NOT EXISTS (SELECT 1 FROM envios e WHERE e.registro=r.identificador)
+        ORDER BY r.identificador DESC
+        """, userId);
+  }
+
+  @GetMapping("/invoices")
+  List<Map<String, Object>> invoices(@RequestParam int userId) {
+    return jdbc.queryForList("""
+        SELECT fc.identificador id, fc.numero, fc.subtotal, fc.comision, fc.costo_envio, fc.total, fc.estado,
+               fc.creado_en, fc.pagado_en, fc.registro registro_id, fc.envio envio_id, fc.medio_pago medio_pago_id,
+               p.descripcionCatalogo producto, p.descripcionCompleta descripcion, e.direccion,
+               (SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto)) FROM fotos f WHERE f.producto=p.identificador LIMIT 1) imagen
+        FROM facturas_compra fc
+        JOIN registroDeSubasta r ON r.identificador = fc.registro
+        JOIN productos p ON p.identificador = r.producto
+        LEFT JOIN envios e ON e.identificador = fc.envio
+        WHERE r.cliente=?
+        ORDER BY fc.identificador DESC
         """, userId);
   }
 
@@ -456,14 +499,59 @@ public class ApiController {
         INSERT INTO envios (registro, direccion, estado, costo, codigo_seguimiento)
         VALUES (?, ?, 'pendiente', 0, ?)
         """, pending.get(0).get("identificador"), fullAddress, tracking);
+    int registroId = ((Number) pending.get(0).get("identificador")).intValue();
+    ensureInvoiceForShipment(registroId, id);
     return one("""
         SELECT e.identificador id, e.estado, e.costo, e.codigo_seguimiento tracking,
-               e.direccion, r.identificador registro_id, p.descripcionCatalogo producto, p.descripcionCompleta descripcion
+               e.direccion, r.identificador registro_id, r.importe, r.comision,
+               p.descripcionCatalogo producto, p.descripcionCompleta descripcion,
+               fc.identificador factura_id, fc.numero factura_numero, fc.subtotal factura_subtotal,
+               fc.comision factura_comision, fc.costo_envio factura_envio, fc.total factura_total,
+               fc.estado factura_estado,
+               (SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto)) FROM fotos f WHERE f.producto=p.identificador LIMIT 1) imagen
         FROM envios e
         JOIN registroDeSubasta r ON r.identificador=e.registro
         JOIN productos p ON p.identificador=r.producto
+        LEFT JOIN facturas_compra fc ON fc.registro=r.identificador
         WHERE e.identificador=?
         """, "Envío no encontrado", id);
+  }
+
+  @PutMapping("/invoices/{invoiceId}/pay")
+  @Transactional
+  Map<String, Object> payInvoice(@PathVariable int invoiceId, @RequestBody PayInvoiceRequest request) {
+    var invoice = one("""
+        SELECT fc.identificador, r.cliente
+        FROM facturas_compra fc
+        JOIN registroDeSubasta r ON r.identificador=fc.registro
+        WHERE fc.identificador=?
+        """, "Factura no encontrada", invoiceId);
+    if (((Number) invoice.get("cliente")).intValue() != request.userId()) {
+      throw new ApiException(HttpStatus.FORBIDDEN, "La factura no pertenece al usuario");
+    }
+    var payment = one("""
+        SELECT identificador, verificado
+        FROM medios_pago
+        WHERE identificador=? AND cliente=? AND activo='si'
+        """, "Medio de pago no encontrado", request.paymentMethodId(), request.userId());
+    if (!"si".equals(payment.get("verificado"))) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "El medio de pago esta pendiente de verificacion");
+    }
+    jdbc.update("""
+        UPDATE facturas_compra
+        SET medio_pago=?, estado='pagada', pagado_en=CURRENT_TIMESTAMP
+        WHERE identificador=?
+        """, request.paymentMethodId(), invoiceId);
+    return one("""
+        SELECT fc.identificador id, fc.numero, fc.subtotal, fc.comision, fc.costo_envio, fc.total, fc.estado,
+               fc.creado_en, fc.pagado_en, fc.registro registro_id, fc.envio envio_id, fc.medio_pago medio_pago_id,
+               p.descripcionCatalogo producto, p.descripcionCompleta descripcion, e.direccion
+        FROM facturas_compra fc
+        JOIN registroDeSubasta r ON r.identificador=fc.registro
+        JOIN productos p ON p.identificador=r.producto
+        LEFT JOIN envios e ON e.identificador=fc.envio
+        WHERE fc.identificador=?
+        """, "Factura no encontrada", invoiceId);
   }
 
   @PostMapping("/shipping/addresses")
@@ -551,6 +639,28 @@ public class ApiController {
     }
   }
 
+  private void ensureInvoiceForShipment(int registroId, int envioId) {
+    var existing = jdbc.queryForList("SELECT identificador FROM facturas_compra WHERE registro=?", registroId);
+    if (!existing.isEmpty()) {
+      jdbc.update("UPDATE facturas_compra SET envio=? WHERE registro=?", envioId, registroId);
+      return;
+    }
+    var row = one("""
+        SELECT importe, comision
+        FROM registroDeSubasta
+        WHERE identificador=?
+        """, "Compra no encontrada", registroId);
+    BigDecimal subtotal = (BigDecimal) row.get("importe");
+    BigDecimal comision = (BigDecimal) row.get("comision");
+    BigDecimal costoEnvio = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    BigDecimal total = subtotal.add(comision).add(costoEnvio).setScale(2, RoundingMode.HALF_UP);
+    String numero = "BV-F-" + registroId + "-" + UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+    jdbc.update("""
+        INSERT INTO facturas_compra (registro, envio, numero, subtotal, comision, costo_envio, total, estado)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pendiente_pago')
+        """, registroId, envioId, numero, subtotal, comision, costoEnvio, total);
+  }
+
   private Map<String, Object> one(String sql, String notFoundMessage, Object... args) {
     var rows = jdbc.queryForList(sql, args);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, notFoundMessage);
@@ -573,6 +683,15 @@ public class ApiController {
 
   private void requirePositive(BigDecimal value, String message) {
     if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) throw new ApiException(HttpStatus.BAD_REQUEST, message);
+  }
+
+  private byte[] decodeBase64Image(String value) {
+    String clean = value.contains(",") ? value.substring(value.indexOf(',') + 1) : value;
+    try {
+      return Base64.getDecoder().decode(clean);
+    } catch (IllegalArgumentException ex) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "La imagen del DNI no tiene un formato valido");
+    }
   }
 
   private void validateName(String value, String message) {
@@ -662,16 +781,17 @@ public class ApiController {
   }
 
   public record LoginRequest(String email, String password) {}
-  public record RegisterRequest(String nombre, String apellido, String email, String password, String documento, String direccion, String pais, Integer numeroPais) {}
+  public record RegisterRequest(String nombre, String apellido, String email, String password, String documento, String direccion, String pais, Integer numeroPais, String dniFrenteBase64, String dniDorsoBase64) {}
   public record ClientRequest(int clienteId) {}
   public record JoinAuctionRequest(int clienteId, int medioPagoId) {}
   public record BidRequest(int clienteId, int itemId, BigDecimal importe) {}
   public record PaymentRequest(int clienteId, String tipo, String moneda, String entidad, String referencia, BigDecimal montoReservado) {}
   public record FavoriteRequest(int clienteId, int subastaId) {}
-  public record SellRequest(int duenioId, String titulo, String descripcion, String historia, List<String> fotos) {}
+  public record SellRequest(int duenioId, String titulo, String descripcion, List<String> fotos) {}
   public record UpdateProfileRequest(String nombre, String apellido, String email, String password, String direccion, String pais, String fotoBase64, String fotoUri) {}
   public record UpdatePasswordRequest(String password) {}
   public record AddressRequest(int userId, String titulo, String direccion, String ciudad, String pais, String predeterminada) {}
   public record ShipmentRequest(int userId, int addressId) {}
+  public record PayInvoiceRequest(int userId, int paymentMethodId) {}
   public record AuctionCoverRequest(String imagen, String mimeType, String descripcion) {}
 }

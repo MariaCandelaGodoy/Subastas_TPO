@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS facturas_compra (
+  identificador INT NOT NULL AUTO_INCREMENT,
+  registro INT NOT NULL,
+  envio INT,
+  medio_pago INT,
+  numero VARCHAR(30) NOT NULL,
+  subtotal DECIMAL(12,2) NOT NULL,
+  comision DECIMAL(12,2) NOT NULL,
+  costo_envio DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total DECIMAL(12,2) NOT NULL,
+  estado VARCHAR(30) NOT NULL DEFAULT 'pendiente_pago',
+  creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  pagado_en TIMESTAMP NULL,
+  CONSTRAINT pk_facturas_compra PRIMARY KEY (identificador),
+  CONSTRAINT uq_facturas_compra_registro UNIQUE (registro),
+  CONSTRAINT uq_facturas_compra_numero UNIQUE (numero),
+  CONSTRAINT fk_facturas_registro FOREIGN KEY (registro) REFERENCES registroDeSubasta(identificador),
+  CONSTRAINT fk_facturas_envio FOREIGN KEY (envio) REFERENCES envios(identificador),
+  CONSTRAINT fk_facturas_medio_pago FOREIGN KEY (medio_pago) REFERENCES medios_pago(identificador)
+);

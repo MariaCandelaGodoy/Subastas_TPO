@@ -185,6 +185,8 @@ export const api = {
         documento: payload.documento,
         direccion: payload.domicilio,
         pais: payload.pais,
+        dni_frente_base64: payload.dniFrenteBase64,
+        dni_dorso_base64: payload.dniDorsoBase64,
       }),
     });
     return created;
@@ -305,7 +307,6 @@ export const api = {
         duenio_id: payload.userId,
         titulo: payload.titulo,
         descripcion: payload.descripcion,
-        historia: payload.historia ?? '',
         fotos: payload.fotos,
       }),
     }),
@@ -382,5 +383,9 @@ export const api = {
     }));
   },
   shipments: (userId: number) => request(`/shipping/shipments?userId=${userId}`),
+  pendingShippingPurchases: (userId: number) => request(`/purchases/pending-shipping?userId=${userId}`),
+  invoices: (userId: number) => request(`/invoices?userId=${userId}`),
   createShipment: (payload: Record<string, unknown>) => request('/shipping/shipments', { method: 'POST', body: JSON.stringify(payload) }),
+  payInvoice: (invoiceId: number, payload: Record<string, unknown>) =>
+    request(`/invoices/${invoiceId}/pay`, { method: 'PUT', body: JSON.stringify({ user_id: payload.userId, payment_method_id: payload.paymentMethodId }) }),
 };
