@@ -1,4 +1,4 @@
-package com.bidvault.api;
+package com.bidvault.api.config;
 
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;

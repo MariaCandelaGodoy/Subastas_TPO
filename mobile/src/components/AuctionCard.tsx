@@ -16,16 +16,19 @@ export function AuctionCard({
   onFavorite?: () => void;
   registered: boolean;
 }) {
+  const formatDate = (value: string) => {
+    const [year, month, day] = String(value || '').split('-');
+    return year && month && day ? `${day}/${month}/${year}` : value;
+  };
+
   return (
     <Pressable onPress={onPress} style={styles.card}>
       <View style={styles.media}>
-        {auction.imagenPortada ? <Image source={{ uri: auction.imagenPortada }} style={styles.cover} /> : null}
-        <View style={styles.mediaOverlay} />
+        {auction.imagenPortada ? <Image source={{ uri: auction.imagenPortada }} style={styles.cover} resizeMode="cover" /> : null}
         <View style={styles.pillRow}>
           <Text style={styles.live}>{auction.estado === 'EN_VIVO' ? 'EN VIVO' : 'PROGRAMADA'}</Text>
           <RankBadge category={auction.categoria} />
         </View>
-        <Text style={styles.mediaTitle}>{auction.productoDestacado}</Text>
       </View>
       <View style={styles.body}>
         <View style={styles.titleRow}>
@@ -46,7 +49,7 @@ export function AuctionCard({
           <Text style={styles.price}>
             {registered ? `Precio desde ${auction.precioDesde.toLocaleString()} ${auction.moneda}` : `Precio ${auction.moneda}`}
           </Text>
-          <Text style={styles.date}>{new Date(auction.fechaInicio).toLocaleDateString()}</Text>
+          <Text style={styles.date}>{formatDate(auction.fechaInicio)}</Text>
         </View>
       </View>
     </Pressable>
@@ -63,20 +66,18 @@ const styles = StyleSheet.create({
   },
   media: {
     height: 160,
-    justifyContent: 'space-between',
-    padding: 12,
-    backgroundColor: colors.ink,
+    backgroundColor: colors.white,
+    overflow: 'hidden',
   },
   cover: {
     ...StyleSheet.absoluteFillObject,
-    width: '100%',
-    height: '100%',
-  },
-  mediaOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(32, 27, 23, 0.42)',
+    resizeMode: 'cover',
   },
   pillRow: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     zIndex: 1,
@@ -96,13 +97,6 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     fontSize: 12,
     fontWeight: '900',
-  },
-  mediaTitle: {
-    color: colors.cream,
-    fontSize: 24,
-    fontWeight: '900',
-    marginTop: 'auto',
-    zIndex: 1,
   },
   body: {
     padding: 14,

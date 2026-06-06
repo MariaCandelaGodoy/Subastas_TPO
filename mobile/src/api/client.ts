@@ -1,4 +1,4 @@
-import Constants from 'expo-constants';
+﻿import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 function resolveApiUrl() {
@@ -41,6 +41,7 @@ export type AuctionSummary = {
   titulo: string;
   descripcion: string;
   fechaInicio: string;
+  hora?: string;
   estado: 'PROGRAMADA' | 'EN_VIVO' | 'FINALIZADA';
   categoria: string;
   moneda: 'ARS' | 'USD';
@@ -63,6 +64,7 @@ export type ProductItem = {
   ofertaMaxima?: number | null;
   vendido: boolean;
   imagenes: string[];
+  duenio: string;
 };
 
 export type AuctionDetail = {
@@ -74,7 +76,7 @@ export type AuctionDetail = {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 45000);
   try {
     response = await fetch(`${API_URL}${path}`, {
       ...options,
@@ -87,16 +89,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   } catch (error) {
     const aborted = error instanceof Error && error.name === 'AbortError';
     if (aborted) {
-      throw new Error(`El backend no respondió en ${API_URL}. Verificá que Spring Boot esté levantado.`);
+      throw new Error(`El backend no respondiÃ³ en ${API_URL}. VerificÃ¡ que Spring Boot estÃ© levantado.`);
     }
-    throw new Error(`No se pudo conectar con el backend en ${API_URL}. Verificá que Spring Boot esté levantado y que Expo use la IP correcta.`);
+    throw new Error(`No se pudo conectar con el backend en ${API_URL}. VerificÃ¡ que Spring Boot estÃ© levantado y que Expo use la IP correcta.`);
   } finally {
     clearTimeout(timeout);
   }
   const body = await response.text();
   const payload = body ? JSON.parse(body) : null;
   if (!response.ok) {
-    throw new Error(payload?.error ?? payload?.message ?? 'No pudimos completar la operación.');
+    throw new Error(payload?.error ?? payload?.message ?? 'No pudimos completar la operaciÃ³n.');
   }
   return payload as T;
 }
@@ -131,6 +133,7 @@ function mapAuction(raw: any): AuctionSummary {
     titulo: raw.titulo ?? raw.descripcion ?? '',
     descripcion: raw.descripcion_catalogo ?? raw.descripcion ?? `${raw.piezas ?? 0} piezas seleccionadas por catalogo`,
     fechaInicio: raw.fecha,
+    hora: raw.hora,
     estado: raw.estado === 'abierta' ? 'EN_VIVO' : raw.estado === 'carrada' ? 'FINALIZADA' : 'PROGRAMADA',
     categoria,
     moneda: raw.moneda,
@@ -157,13 +160,14 @@ function mapProduct(raw: any, auction: AuctionSummary): ProductItem {
     ofertaMinima: Math.round(best + base * 0.01),
     ofertaMaxima: isPremium ? null : Math.round(best + base * 0.2),
     vendido: raw.subastado === 'si',
-    imagenes: raw.imagen ? [raw.imagen] : [],
+    imagenes: Array.isArray(raw.imagenes) && raw.imagenes.length ? raw.imagenes : raw.imagen ? [raw.imagen] : [],
+    duenio: raw.duenio_nombre ?? raw.duenio ?? '',
   };
 }
 
 export const api = {
   login: async (email: string, password: string) => {
-    if (!email.trim() || !password.trim()) throw new Error('Ingresá email y contraseña.');
+    if (!email.trim() || !password.trim()) throw new Error('IngresÃ¡ email y contraseÃ±a.');
     try {
       return mapUser(await request('/auth/login', {
         method: 'POST',
@@ -171,8 +175,8 @@ export const api = {
       }));
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
-      if (message) throw new Error(message);
-      throw new Error('El email no existe o la contraseña es incorrecta.');
+      if (message.includes('backend') || message.includes('conectar') || message.includes('respondi')) throw new Error(message);
+      throw new Error('El mail o la clave son incorrectos o no te encuentras registrado.');
     }
   },
   register: async (payload: Record<string, string>) => {

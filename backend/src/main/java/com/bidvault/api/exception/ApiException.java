@@ -1,4 +1,4 @@
-package com.bidvault.api;
+package com.bidvault.api.exception;
 
 import org.springframework.http.HttpStatus;
 

@@ -7,8 +7,13 @@ import { BottomTabs, Header, RankBadge, TabKey } from './src/components/Chrome';
 import { Screen } from './src/components/Screen';
 import { colors, shadow } from './src/theme/theme';
 
-type Route = 'splash' | 'login' | 'register' | 'terms' | 'app' | 'auction' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'purchaseInvoice' | 'shipmentDetail' | 'myPieces' | 'metrics';
+type Route = 'splash' | 'login' | 'register' | 'terms' | 'app' | 'auction' | 'productDetail' | 'bidRoom' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'purchaseInvoice' | 'shipmentDetail' | 'myPieces' | 'metrics';
 type AuctionFilter = 'EN_VIVO' | 'FAVORITAS' | 'PROGRAMADA';
+
+function imageSource(value?: string | null) {
+  if (!value) return null;
+  return { uri: value };
+}
 
 export default function App() {
   return (
@@ -23,6 +28,8 @@ function BidVaultApp() {
   const [tab, setTab] = useState<TabKey>('home');
   const [session, setSession] = useState<UserSession | null>(null);
   const [selectedAuction, setSelectedAuction] = useState<number | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<ProductItem | null>(null);
+  const [selectedCurrency, setSelectedCurrency] = useState<string>('USD');
   const [selectedShipment, setSelectedShipment] = useState<any | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [paymentBackRoute, setPaymentBackRoute] = useState<Route>('settings');
@@ -52,9 +59,13 @@ function BidVaultApp() {
   if (route === 'terms') return <TermsScreen onBack={() => setRoute(termsBackRoute)} />;
   if (route === 'register') return <RegisterScreen onDone={() => setRoute('login')} onBack={() => setRoute('login')} />;
   if (route === 'auction' && selectedAuction) {
-    return <AuctionLiveScreen auctionId={selectedAuction} session={session} onBack={() => setRoute('app')} onPayments={() => { setPaymentBackRoute('auction'); setRoute('payments'); }} />;
+    return <AuctionDetailScreen auctionId={selectedAuction} session={session} onBack={() => setRoute('app')} onJoin={() => session ? setRoute('selectPayment') : setRoute('login')} onProduct={(product, moneda) => { setSelectedProduct(product); setSelectedCurrency(moneda); setRoute('productDetail'); }} />;
   }
-  if (route === 'selectPayment' && selectedAuction) return session ? <SelectPaymentScreen session={session} auctionId={selectedAuction} onBack={() => setRoute('app')} onDone={() => setRoute('auction')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'productDetail' && selectedAuction && selectedProduct) return <ProductDetailScreen product={selectedProduct} moneda={selectedCurrency} onBack={() => setRoute('auction')} />;
+  if (route === 'bidRoom' && selectedAuction) {
+    return <AuctionLiveScreen auctionId={selectedAuction} initialProduct={selectedProduct} session={session} onBack={() => setRoute('auction')} onPayments={() => { setPaymentBackRoute('bidRoom'); setRoute('payments'); }} />;
+  }
+  if (route === 'selectPayment' && selectedAuction) return session ? <SelectPaymentScreen session={session} auctionId={selectedAuction} onBack={() => setRoute('auction')} onDone={() => setRoute('bidRoom')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'payments') return <PaymentsScreen session={session} onBack={() => setRoute(paymentBackRoute)} />;
   if (route === 'editProfile') return session ? <EditProfileScreen session={session} onBack={() => setRoute('settings')} onSaved={(updated) => setSession({ ...session, ...updated, token: session.token })} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'shipping') return session ? <ShippingScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
@@ -79,8 +90,8 @@ function BidVaultApp() {
 
   return (
     <View style={{ flex: 1 }}>
-      {tab === 'home' && <HomeScreen session={session} onSettings={() => requireSession(() => setRoute('settings'))} onOpenAuction={(id) => { setSelectedAuction(id); session ? setRoute('selectPayment') : setRoute('auction'); }} />}
-      {tab === 'upload' && <UploadScreen session={session} onSettings={() => requireSession(() => setRoute('settings'))} />}
+      {tab === 'home' && <HomeScreen session={session} onSettings={() => requireSession(() => setRoute('settings'))} onOpenAuction={(id) => { setSelectedAuction(id); setSelectedProduct(null); setRoute('auction'); }} />}
+      {tab === 'upload' && (session ? <UploadScreen session={session} onSettings={() => requireSession(() => setRoute('settings'))} /> : <LoginRequiredScreen onLogin={() => setRoute('login')} />)}
       {tab === 'notifications' && <NotificationsScreen session={session} onSettings={() => requireSession(() => setRoute('settings'))} onCoordinate={() => requireSession(() => setRoute('coordinateShipping'))} onTrack={() => requireSession(() => setRoute('shipmentDetail'))} />}
       {tab === 'profile' && <ProfileScreen session={session} onMetrics={() => requireSession(() => setRoute('metrics'))} onSettings={() => requireSession(() => setRoute('settings'))} />}
       <BottomTabs active={tab} onChange={setTab} />
@@ -119,6 +130,7 @@ function SplashScreen() {
 function LoginScreen({ onLogin, onRegister, onGuest, onTerms }: { onLogin: (user: UserSession) => void; onRegister: () => void; onGuest: () => void; onTerms: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
@@ -126,7 +138,7 @@ function LoginScreen({ onLogin, onRegister, onGuest, onTerms }: { onLogin: (user
     try {
       onLogin(await api.login(email, password));
     } catch (error) {
-      Alert.alert('No se pudo iniciar sesión', error instanceof Error ? error.message : 'El email no existe o la contraseña es incorrecta.');
+      Alert.alert('No se pudo iniciar sesión', error instanceof Error ? error.message : 'El mail o la clave son incorrectos o no te encuentras registrado.');
     } finally {
       setLoading(false);
     }
@@ -140,7 +152,7 @@ function LoginScreen({ onLogin, onRegister, onGuest, onTerms }: { onLogin: (user
       </View>
       <Text style={styles.largeTitle}>Bienvenido</Text>
       <Field label="Email" icon="mail-outline" value={email} onChangeText={setEmail} autoCapitalize="none" />
-      <Field label="Password" icon="lock-closed-outline" value={password} onChangeText={setPassword} secureTextEntry />
+      <PasswordField value={password} onChangeText={setPassword} visible={showPassword} onToggle={() => setShowPassword((current) => !current)} />
       <PrimaryButton label={loading ? 'Ingresando...' : 'Iniciar sesion'} onPress={submit} disabled={loading} />
       <Pressable onPress={onRegister}><Text style={styles.link}>No tenes cuenta? Registrate</Text></Pressable>
       <Pressable onPress={onGuest}><Text style={styles.secondaryLink}>Iniciar sesion mas tarde</Text></Pressable>
@@ -283,6 +295,21 @@ function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => 
   );
 }
 
+function PasswordField({ value, onChangeText, visible, onToggle }: { value: string; onChangeText: (value: string) => void; visible: boolean; onToggle: () => void }) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.fieldLabel}>Password</Text>
+      <View style={styles.inputRow}>
+        <Ionicons name="lock-closed-outline" size={19} color={colors.gold} />
+        <TextInput placeholderTextColor={colors.muted} style={styles.input} value={value} onChangeText={onChangeText} secureTextEntry={!visible} />
+        <Pressable onPress={onToggle} hitSlop={10} style={styles.passwordEye}>
+          <Ionicons name={visible ? 'eye-off-outline' : 'eye-outline'} size={22} color={colors.burgundy} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function TermsScreen({ onBack }: { onBack: () => void }) {
   return (
     <Screen style={styles.termsScreen}>
@@ -370,13 +397,13 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
   return (
     <Screen>
       <Header name={session ? `${session.nombre} ${session.apellido}` : 'Inicie sesion para poder ver y participar'} category={session?.categoria} onSettings={onSettings} />
-      <View style={styles.searchBox}>
+      <View style={styles.homeSearchBox}>
         <TextInput
           value={query}
           onChangeText={setQuery}
           placeholder="Buscador"
           placeholderTextColor={colors.muted}
-          style={styles.searchInput}
+          style={styles.homeSearchInput}
         />
         <Ionicons name="search" size={24} color={colors.ink} />
       </View>
@@ -396,10 +423,10 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
       {categoryFilter !== 'TODAS' ? (
         <Pressable onPress={() => setCategoryFilter('TODAS')}><Text style={styles.clearFilter}>Quitar filtro de categoria</Text></Pressable>
       ) : null}
-      <View style={styles.segment}>
+      <View style={styles.homeSegment}>
         {(['EN_VIVO', 'FAVORITAS', 'PROGRAMADA'] as const).map((item) => (
-          <Pressable key={item} onPress={() => setFilter(item)} style={[styles.segmentItem, filter === item && styles.segmentActive]}>
-            <Text style={[styles.segmentText, filter === item && styles.segmentTextActive]}>
+          <Pressable key={item} onPress={() => setFilter(item)} style={[styles.homeSegmentItem, filter === item && styles.homeSegmentActive]}>
+            <Text style={[styles.homeSegmentText, filter === item && styles.homeSegmentTextActive]}>
               {item === 'EN_VIVO' ? 'En vivo' : item === 'PROGRAMADA' ? 'Programadas' : 'Favoritas'}
             </Text>
           </Pressable>
@@ -419,13 +446,179 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
   );
 }
 
-function AuctionLiveScreen({ auctionId, session, onBack, onPayments }: { auctionId: number; session: UserSession | null; onBack: () => void; onPayments: () => void }) {
+function AuctionDetailScreen({
+  auctionId,
+  session,
+  onBack,
+  onJoin,
+  onProduct,
+}: {
+  auctionId: number;
+  session: UserSession | null;
+  onBack: () => void;
+  onJoin: () => void;
+  onProduct: (product: ProductItem, moneda: string) => void;
+}) {
+  const [detail, setDetail] = useState<AuctionDetail | null>(null);
+  const [favorite, setFavorite] = useState(false);
+
+  useEffect(() => {
+    api.auction(auctionId, session?.userId).then((data) => {
+      setDetail(data);
+      setFavorite(data.auction.favorito);
+    }).catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.'));
+  }, [auctionId, session?.userId]);
+
+  if (!detail) {
+    return <Screen><BackButton onPress={onBack} /><ActivityIndicator color={colors.burgundy} /></Screen>;
+  }
+
+  const cover = imageSource(detail.auction.imagenPortada);
+  const toggleFavorite = async () => {
+    if (!session) return Alert.alert('Inicie sesión', 'Necesitás iniciar sesión para agregar favoritos.');
+    const next = !favorite;
+    setFavorite(next);
+    try {
+      await api.setFavorite(session.userId, detail.auction.id, next);
+    } catch (error) {
+      setFavorite(!next);
+      Alert.alert('Favoritos', error instanceof Error ? error.message : 'No pudimos actualizar favoritos.');
+    }
+  };
+
+  return (
+    <Screen style={styles.auctionDetailScreen}>
+      <BackButton onPress={onBack} />
+      <View style={styles.auctionInfoCard}>
+        <View style={styles.auctionCoverWrap}>
+          {cover ? <Image source={cover} style={styles.auctionDetailCover} resizeMode="cover" /> : <View style={styles.auctionDetailCoverFallback}><Ionicons name="image-outline" size={42} color={colors.gold} /></View>}
+          <Text style={styles.auctionLivePill}>{detail.auction.estado === 'EN_VIVO' ? 'EN VIVO' : 'PROGRAMADA'}</Text>
+        </View>
+        <View style={styles.auctionTitleRow}>
+          <Text style={styles.auctionDetailTitle}>{detail.auction.titulo}</Text>
+          <RankBadge category={detail.auction.categoria} />
+        </View>
+        <View style={styles.auctionDataGrid}>
+          <AuctionData label="FECHA & HORA" value={`${formatDisplayDate(detail.auction.fechaInicio)}\n${String(detail.auction.hora ?? '').slice(0, 5)}hs`} />
+          <AuctionData label="REMATADOR" value={detail.subastador || 'Sin asignar'} />
+          <AuctionData label="LOTES TOTALES" value={`${detail.products.length} piezas`} />
+          <AuctionData label="UBICACIÓN" value={detail.auction.ubicacion || 'Sin ubicación'} />
+        </View>
+      </View>
+      <PrimaryButton
+        label={detail.auction.estado === 'EN_VIVO' ? 'Unirme' : 'Subasta programada'}
+        onPress={onJoin}
+        disabled={detail.auction.estado !== 'EN_VIVO'}
+      />
+      <View style={styles.catalogHeaderRow}>
+        <Text style={styles.catalogTitle}>Catálogo de objetos</Text>
+        <View style={styles.catalogActions}>
+          <Pressable onPress={toggleFavorite} style={styles.favoriteWide}>
+            <Text style={styles.favoriteWideText}>{favorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}</Text>
+          </Pressable>
+          <View style={styles.catalogToolRow}>
+            <Text style={styles.catalogTool}><Ionicons name="filter" size={14} /> Filtrar</Text>
+            <Text style={styles.catalogTool}><Ionicons name="swap-vertical" size={14} /> Ordenar</Text>
+          </View>
+        </View>
+      </View>
+      <View style={styles.catalogBand}>
+        {detail.products.map((product) => <CatalogProductCard key={product.id} product={product} moneda={detail.auction.moneda} onPress={() => onProduct(product, detail.auction.moneda)} />)}
+      </View>
+    </Screen>
+  );
+}
+
+function ProductDetailScreen({ product, moneda, onBack }: { product: ProductItem; moneda: string; onBack: () => void }) {
+  const [active, setActive] = useState(product.imagenes[0]);
+  const mainSource = imageSource(active ?? product.imagenes[0]);
+  return (
+    <Screen style={styles.productDetailScreen}>
+      <BackButton onPress={onBack} />
+      {mainSource ? <Image source={mainSource} style={styles.productDetailHero} resizeMode="cover" /> : <View style={styles.productDetailHeroFallback}><Ionicons name="image-outline" size={46} color={colors.gold} /></View>}
+      <View style={styles.thumbRow}>
+        {product.imagenes.map((image) => {
+          const source = imageSource(image);
+          return source ? (
+            <Pressable key={image} onPress={() => setActive(image)}>
+              <Image source={source} style={[styles.productThumb, active === image && styles.productThumbActive]} resizeMode="cover" />
+            </Pressable>
+          ) : null;
+        })}
+      </View>
+      <Text style={styles.productDetailTitle}>{product.titulo}</Text>
+      <View style={styles.productDescriptionPanel}>
+        <Text style={styles.productDescriptionTitle}>Descripción</Text>
+        <Text style={styles.productDescriptionText}>{product.descripcion}</Text>
+        <View style={styles.productPriceBox}>
+          <Text style={styles.productInfoLabel}>PRECIO{'\n'}BASE</Text>
+          <Text style={styles.productPriceValue}>${product.precioBase.toLocaleString()} {moneda}</Text>
+        </View>
+        <View style={styles.productInfoRow}>
+          <View style={styles.productSmallBox}>
+            <Text style={styles.productInfoLabel}>NÚMERO DE PIEZA</Text>
+            <Text style={styles.productSmallValue}>#{product.numeroPieza}</Text>
+          </View>
+          <View style={styles.productOwnerBox}>
+            <Text style={styles.productInfoLabel}>DUEÑO/A ACTUAL</Text>
+            <Text style={styles.productOwnerValue}>{product.duenio || 'Sin dato'}</Text>
+          </View>
+        </View>
+      </View>
+    </Screen>
+  );
+}
+
+function CatalogProductCard({ product, moneda, onPress }: { product: ProductItem; moneda: string; onPress: () => void }) {
+  const source = imageSource(product.imagenes[0]);
+  return (
+    <View style={styles.catalogProductCard}>
+      {source ? <Image source={source} style={styles.catalogProductImage} resizeMode="cover" /> : <View style={styles.catalogProductFallback}><Ionicons name="image-outline" size={42} color={colors.gold} /></View>}
+      <Text style={styles.catalogProductTitle}>{product.titulo}</Text>
+      <Text style={styles.catalogProductDescription} numberOfLines={2}>{product.descripcion}</Text>
+      <View style={styles.catalogProductFooter}>
+        <View>
+          <Text style={styles.catalogProductMeta}>Precio base</Text>
+          <Text style={styles.catalogProductPrice}>${product.precioBase.toLocaleString()} {moneda}</Text>
+        </View>
+        <View>
+          <Text style={styles.catalogProductMeta}>Pieza</Text>
+          <Text style={styles.catalogProductPiece}>#{product.numeroPieza}</Text>
+        </View>
+        <Pressable onPress={onPress} style={styles.catalogEyeButton}>
+          <Ionicons name="eye" size={28} color={colors.burgundy} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function AuctionData({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.auctionDataItem}>
+      <Text style={styles.auctionDataLabel}>{label}</Text>
+      <Text style={styles.auctionDataValue}>{value}</Text>
+    </View>
+  );
+}
+
+function formatDisplayDate(value: string) {
+  const [year, month, day] = String(value || '').split('-');
+  return year && month && day ? `${day}/${month}/${year}` : value;
+}
+
+function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayments }: { auctionId: number; initialProduct: ProductItem | null; session: UserSession | null; onBack: () => void; onPayments: () => void }) {
   const [detail, setDetail] = useState<AuctionDetail | null>(null);
   const [selected, setSelected] = useState<ProductItem | null>(null);
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const load = () => api.auction(auctionId, session?.userId).then((data) => { setDetail(data); setSelected(data.products[0]); setAmount(String(data.products[0]?.ofertaMinima ?? '')); });
+  const load = () => api.auction(auctionId, session?.userId).then((data) => {
+    const current = initialProduct ? data.products.find((item: ProductItem) => item.id === initialProduct.id) ?? data.products[0] : data.products[0];
+    setDetail(data);
+    setSelected(current);
+    setAmount(String(current?.ofertaMinima ?? ''));
+  });
   useEffect(() => { load().catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.')); }, [auctionId]);
 
   const placeBid = async () => {
@@ -450,21 +643,41 @@ function AuctionLiveScreen({ auctionId, session, onBack, onPayments }: { auction
     return <Screen><BackButton onPress={onBack} /><ActivityIndicator color={colors.burgundy} /></Screen>;
   }
 
+  const cover = imageSource(detail.auction.imagenPortada);
+  const selectedImage = imageSource(selected.imagenes[0]);
+
   return (
-    <Screen>
+    <Screen style={styles.bidRoomScreen}>
       <BackButton onPress={onBack} />
-      <View style={styles.liveHeader}>
-        <Text style={styles.liveLabel}>EN VIVO</Text>
-        <Text style={styles.liveTitle}>{detail.auction.titulo}</Text>
-        <RankBadge category={detail.auction.categoria} />
+      <View style={styles.bidAuctionSummary}>
+        {cover ? <Image source={cover} style={styles.bidAuctionImage} resizeMode="cover" /> : <View style={styles.bidAuctionImageFallback}><Ionicons name="image-outline" size={32} color={colors.gold} /></View>}
+        <View style={{ flex: 1 }}>
+          <View style={styles.bidSummaryTitleRow}>
+            <Text style={styles.bidSummaryTitle}>{detail.auction.titulo}</Text>
+            <RankBadge category={detail.auction.categoria} />
+          </View>
+          <View style={styles.statsRow}>
+            <Stat label="Tiempo restante" value="01:15:14" />
+            <Stat label="Espectadores" value={String(detail.auction.espectadores)} />
+          </View>
+        </View>
       </View>
-      <View style={styles.statsRow}>
-        <Stat label="Tiempo restante" value="01:15:14" />
-        <Stat label="Espectadores" value={String(detail.auction.espectadores)} />
+      <View style={styles.bidCurrentLot}>
+        {selectedImage ? <Image source={selectedImage} style={styles.bidLotImage} resizeMode="cover" /> : <View style={styles.bidLotFallback}><Ionicons name="image-outline" size={24} color={colors.gold} /></View>}
+        <View style={styles.bidLotMain}>
+          <Text style={styles.bidLotTitle}>{selected.titulo}</Text>
+          <View style={styles.bidLotMetaRow}>
+            <View>
+              <Text style={styles.catalogProductMeta}>Precio base</Text>
+              <Text style={styles.catalogProductPrice}>${selected.precioBase.toLocaleString()} {detail.auction.moneda}</Text>
+            </View>
+            <View>
+              <Text style={styles.catalogProductMeta}>Pieza</Text>
+              <Text style={styles.catalogProductPiece}>#{selected.numeroPieza}</Text>
+            </View>
+          </View>
+        </View>
       </View>
-      {selected.imagenes[0] ? <Image source={{ uri: selected.imagenes[0] }} style={styles.productImage} /> : <View style={styles.productImagePlaceholder}><Ionicons name="image-outline" size={42} color={colors.gold} /></View>}
-      <Text style={styles.productTitle}>{selected.titulo}</Text>
-      <Text style={styles.description}>{selected.descripcion}</Text>
       {!session ? (
         <View style={styles.guestPanel}>
           <Text style={styles.offerLabel}>Precio</Text>
@@ -477,8 +690,11 @@ function AuctionLiveScreen({ auctionId, session, onBack, onPayments }: { auction
             <Stat label="Precio base" value={`${selected.precioBase.toLocaleString()} ${detail.auction.moneda}`} />
             <Stat label="Pieza" value={`#${selected.numeroPieza}`} />
           </View>
-          <Text style={styles.offerLabel}>Ultima oferta</Text>
-          <Text style={styles.offerValue}>$ {selected.mejorOferta.toLocaleString()} {detail.auction.moneda}</Text>
+          <View style={styles.lastOfferCompact}>
+            <Text style={styles.offerLabel}>Ultima oferta</Text>
+            <Text style={styles.offerValue}>$ {selected.mejorOferta.toLocaleString()} {detail.auction.moneda}</Text>
+            <Text style={styles.description}>Ofertado por el mejor postor actual.</Text>
+          </View>
           <Text style={styles.range}>Minimo {selected.ofertaMinima.toLocaleString()} {selected.ofertaMaxima ? ` | Maximo ${selected.ofertaMaxima.toLocaleString()}` : ' | Sin maximo para Oro/Platino'}</Text>
           <Field label="Tu puja" value={amount} onChangeText={setAmount} keyboardType="numeric" />
           <PrimaryButton label={loading ? 'Confirmando...' : 'Pujar'} onPress={placeBid} disabled={loading || detail.auction.estado !== 'EN_VIVO'} />
@@ -622,6 +838,20 @@ function SelectablePayment({ item, selected, onPress }: { item: any; selected: b
   );
 }
 
+function LoginRequiredScreen({ onLogin }: { onLogin: () => void }) {
+  return (
+    <Screen>
+      <SimpleTitleHeader title="Nuevo objeto" />
+      <View style={styles.guestPanel}>
+        <Ionicons name="lock-closed-outline" size={36} color={colors.burgundy} />
+        <Text style={styles.sectionTitle}>Iniciá sesión</Text>
+        <Text style={styles.description}>Necesitás una cuenta verificada para subir productos.</Text>
+        <PrimaryButton label="Ir al login" onPress={onLogin} />
+      </View>
+    </Screen>
+  );
+}
+
 function UploadScreen({ session, onSettings }: { session: UserSession | null; onSettings: () => void }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -669,6 +899,9 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
     if (!session) return Alert.alert('Inicie sesion', 'Necesitas una cuenta para subir un objeto.');
     if (!declared) return Alert.alert('Declaracion requerida', 'Debes declarar que el bien te pertenece y aceptar la devolucion con cargo.');
     if (photos.length < 6) return Alert.alert('Fotos requeridas', 'Debés subir al menos 6 fotos del objeto.');
+    if (photos.some((photo) => !photo.dataUri.startsWith('data:image/'))) {
+      return Alert.alert('Fotos inválidas', 'No pudimos leer una de las imágenes. Volvé a seleccionarlas.');
+    }
     try {
       await api.submitProduct({
         userId: session.userId,
@@ -1272,21 +1505,21 @@ function MyPiecesScreen({ session, onBack }: { session: UserSession; onBack: () 
     const matchesTab = filter === 'EN REVISION'
       ? ['pendiente', 'en_revision'].includes(status)
       : filter === 'EN SUBASTA'
-        ? ['aceptado'].includes(status)
-        : ['aceptado', 'pendiente', 'en_revision'].includes(status);
+        ? ['en_subasta'].includes(status)
+        : ['aceptado'].includes(status);
     return matchesText && matchesTab;
   });
   return (
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Mis piezas" onBack={onBack} />
-      <View style={styles.searchBox}>
-        <TextInput value={query} onChangeText={setQuery} placeholder="Buscador" placeholderTextColor={colors.muted} style={styles.searchInput} />
+      <View style={styles.piecesSearchBox}>
+        <TextInput value={query} onChangeText={setQuery} placeholder="Buscador" placeholderTextColor={colors.muted} style={styles.piecesSearchInput} />
         <Ionicons name="search" size={20} color={colors.ink} />
       </View>
-      <View style={styles.segment}>
+      <View style={styles.piecesSegment}>
         {(['ACTIVAS', 'EN SUBASTA', 'EN REVISION'] as const).map((item) => (
-          <Pressable key={item} onPress={() => setFilter(item)} style={[styles.segmentItem, filter === item && styles.segmentActive]}>
-            <Text style={[styles.segmentText, filter === item && styles.segmentTextActive]}>{item}</Text>
+          <Pressable key={item} onPress={() => setFilter(item)} style={[styles.piecesSegmentItem, filter === item && styles.piecesSegmentActive]}>
+            <Text style={[styles.piecesSegmentText, filter === item && styles.piecesSegmentTextActive]}>{item}</Text>
           </Pressable>
         ))}
       </View>
@@ -1386,7 +1619,7 @@ function AddressCard({ title, subtitle, tag, selected }: { title: string; subtit
 function PieceRequestCard({ piece }: { piece: any }) {
   return (
     <View style={styles.pieceCard}>
-      {piece.foto ? <Image source={{ uri: piece.foto }} style={styles.pieceImage} /> : <View style={styles.pieceImagePlaceholder}><Ionicons name="image-outline" size={38} color={colors.gold} /></View>}
+      {piece.foto ? <Image source={{ uri: piece.foto }} style={styles.pieceImage} resizeMode="cover" /> : <View style={styles.pieceImagePlaceholder}><Ionicons name="image-outline" size={38} color={colors.gold} /></View>}
       <Text style={styles.pieceTitle}>{piece.titulo}</Text>
       <Text style={styles.description}>{piece.descripcion}</Text>
       <Text style={styles.verified}>Estado: {String(piece.estado).replace('_', ' ').toUpperCase()}</Text>
@@ -1442,6 +1675,7 @@ const styles = StyleSheet.create({
   fieldLabel: { color: colors.ink, fontWeight: '800', marginBottom: 6 },
   inputRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.white, borderColor: colors.linen, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12 },
   input: { flex: 1, color: colors.ink, fontSize: 16, minHeight: 48 },
+  passwordEye: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   helperText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: -8, marginBottom: 12 },
   formError: { color: colors.burgundy, fontSize: 13, fontWeight: '700', lineHeight: 18, marginTop: -4, marginBottom: 12 },
   dniRegisterLabel: { color: colors.ink, fontSize: 14, fontWeight: '900', marginBottom: 8 },
@@ -1479,18 +1713,24 @@ const styles = StyleSheet.create({
   photoPreview: { width: 70, height: 70, borderRadius: 6, backgroundColor: colors.linen },
   uploadPanel: { backgroundColor: colors.cream, borderRadius: 8, padding: 14, marginBottom: 16, ...shadow },
   declarationRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 2 },
-  searchBox: { minHeight: 52, borderRadius: 8, backgroundColor: colors.cream, borderWidth: 1, borderColor: '#D6CCB5', paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, ...shadow },
-  searchText: { color: colors.muted, fontSize: 16 },
-  searchInput: { flex: 1, minHeight: 46, color: colors.ink, fontSize: 16 },
+  homeSearchBox: { minHeight: 52, borderRadius: 26, backgroundColor: colors.linen, paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  homeSearchInput: { flex: 1, minHeight: 46, color: colors.ink, fontSize: 16 },
+  piecesSearchBox: { minHeight: 52, borderRadius: 8, backgroundColor: colors.cream, borderWidth: 1, borderColor: '#D6CCB5', paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, ...shadow },
+  piecesSearchInput: { flex: 1, minHeight: 46, color: colors.ink, fontSize: 16 },
   toolRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginBottom: 12 },
   toolPill: { backgroundColor: colors.linen, color: colors.muted, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 4, fontSize: 12 },
   toolPillActive: { backgroundColor: colors.burgundy, color: colors.cream },
   clearFilter: { color: colors.burgundy, fontWeight: '900', textAlign: 'right', marginBottom: 10 },
-  segment: { flexDirection: 'row', backgroundColor: colors.cream, borderRadius: 8, padding: 4, marginBottom: 18, borderWidth: 1, borderColor: '#D6CCB5' },
-  segmentItem: { flex: 1, minHeight: 38, justifyContent: 'center', alignItems: 'center', borderRadius: 6 },
-  segmentActive: { backgroundColor: colors.burgundy },
-  segmentText: { color: colors.ink, fontWeight: '800', fontSize: 12 },
-  segmentTextActive: { color: colors.cream },
+  homeSegment: { flexDirection: 'row', backgroundColor: colors.linen, borderRadius: 8, padding: 4, marginBottom: 18 },
+  homeSegmentItem: { flex: 1, minHeight: 38, justifyContent: 'center', alignItems: 'center', borderRadius: 6 },
+  homeSegmentActive: { backgroundColor: colors.white },
+  homeSegmentText: { color: colors.muted, fontWeight: '800', fontSize: 12 },
+  homeSegmentTextActive: { color: colors.burgundy },
+  piecesSegment: { flexDirection: 'row', backgroundColor: colors.cream, borderRadius: 8, padding: 4, marginBottom: 18, borderWidth: 1, borderColor: '#D6CCB5' },
+  piecesSegmentItem: { flex: 1, minHeight: 38, justifyContent: 'center', alignItems: 'center', borderRadius: 6 },
+  piecesSegmentActive: { backgroundColor: colors.burgundy },
+  piecesSegmentText: { color: colors.ink, fontWeight: '800', fontSize: 12 },
+  piecesSegmentTextActive: { color: colors.cream },
   liveHeader: { gap: 6, marginBottom: 14 },
   liveLabel: { color: colors.danger, fontWeight: '900' },
   liveTitle: { color: colors.burgundy, fontSize: 28, fontWeight: '900' },
@@ -1504,6 +1744,94 @@ const styles = StyleSheet.create({
   productTitle: { color: colors.ink, fontSize: 24, fontWeight: '900' },
   description: { color: colors.muted, lineHeight: 21, marginTop: 6 },
   bidPanel: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  auctionDetailScreen: { backgroundColor: colors.linen },
+  auctionInfoCard: { backgroundColor: '#EEEADF', borderRadius: 8, padding: 14, marginBottom: 16, ...shadow },
+  auctionCoverWrap: { height: 190, borderRadius: 7, overflow: 'hidden', marginBottom: 16 },
+  auctionDetailCover: { width: '100%', height: '100%' },
+  auctionDetailCoverFallback: { width: '100%', height: '100%', backgroundColor: colors.linen, alignItems: 'center', justifyContent: 'center' },
+  auctionLivePill: { position: 'absolute', top: 12, left: 12, backgroundColor: colors.burgundy, color: colors.cream, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 5, fontSize: 13, fontWeight: '900' },
+  auctionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 },
+  auctionDetailTitle: { flex: 1, color: colors.ink, fontSize: 26, fontWeight: '900' },
+  auctionDataGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 14 },
+  auctionDataItem: { width: '50%', paddingRight: 10 },
+  auctionDataLabel: { color: colors.muted, fontSize: 11, fontWeight: '900', marginBottom: 5 },
+  auctionDataValue: { color: colors.ink, fontSize: 15, lineHeight: 19, fontWeight: '700' },
+  catalogHeaderRow: { gap: 12, marginTop: 24, marginBottom: 14 },
+  catalogTitle: { color: colors.ink, fontSize: 26, lineHeight: 30, fontWeight: '900' },
+  catalogActions: { gap: 10 },
+  favoriteWide: { backgroundColor: '#E4A3AD', borderRadius: 7, minHeight: 38, alignItems: 'center', justifyContent: 'center' },
+  favoriteWideText: { color: colors.burgundy, fontSize: 15, fontWeight: '800' },
+  catalogToolRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  catalogTool: { flex: 1, backgroundColor: '#D2CAB7', color: '#6D6154', borderRadius: 8, paddingVertical: 9, textAlign: 'center', fontSize: 16, fontWeight: '700' },
+  catalogBand: { gap: 18, paddingBottom: 18 },
+  catalogProductCard: { backgroundColor: colors.cream, borderRadius: 8, padding: 12, overflow: 'hidden', ...shadow },
+  catalogProductImage: { width: '100%', height: 190, borderRadius: 7, marginBottom: 14, backgroundColor: colors.linen },
+  catalogProductFallback: { width: '100%', height: 190, borderRadius: 7, marginBottom: 14, backgroundColor: colors.linen, alignItems: 'center', justifyContent: 'center' },
+  catalogProductTitle: { color: colors.ink, fontSize: 24, lineHeight: 28, fontWeight: '900' },
+  catalogProductDescription: { color: colors.muted, fontSize: 15, lineHeight: 20, marginTop: 6 },
+  catalogProductFooter: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 18, gap: 12 },
+  catalogProductMeta: { color: colors.muted, fontSize: 13, marginBottom: 5 },
+  catalogProductPrice: { color: colors.burgundy, fontSize: 18, fontWeight: '900' },
+  catalogProductPiece: { color: colors.burgundy, fontSize: 18, fontWeight: '900' },
+  catalogEyeButton: { width: 48, height: 48, borderRadius: 8, backgroundColor: '#D3C39A', alignItems: 'center', justifyContent: 'center' },
+  productDetailScreen: { backgroundColor: colors.linen },
+  productDetailHero: { width: '100%', height: 280, borderRadius: 7, marginTop: 14, marginBottom: 14, backgroundColor: colors.cream },
+  productDetailHeroFallback: { width: '100%', height: 280, borderRadius: 7, marginTop: 14, marginBottom: 14, backgroundColor: colors.cream, alignItems: 'center', justifyContent: 'center' },
+  thumbRow: { flexDirection: 'row', justifyContent: 'center', gap: 14, marginBottom: 24 },
+  productThumb: { width: 48, height: 48, borderRadius: 24 },
+  productThumbActive: { borderWidth: 2, borderColor: colors.burgundy },
+  productDetailTitle: { color: colors.ink, fontSize: 30, lineHeight: 34, fontWeight: '900', marginBottom: 16 },
+  productDescriptionPanel: { backgroundColor: '#EEEADF', borderRadius: 8, padding: 16 },
+  productDescriptionTitle: { color: colors.ink, fontSize: 22, fontWeight: '900', marginBottom: 12 },
+  productDescriptionText: { color: colors.ink, fontSize: 16, lineHeight: 23, marginBottom: 18 },
+  productPriceBox: { backgroundColor: colors.linen, minHeight: 82, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, ...shadow },
+  productInfoLabel: { color: '#61594B', fontSize: 12, lineHeight: 16, fontWeight: '800' },
+  productPriceValue: { color: colors.burgundy, fontSize: 24, fontWeight: '900' },
+  productInfoRow: { flexDirection: 'row', gap: 12 },
+  productSmallBox: { flex: 0.85, backgroundColor: colors.linen, minHeight: 82, alignItems: 'center', justifyContent: 'center', gap: 8, ...shadow },
+  productOwnerBox: { flex: 1.6, backgroundColor: colors.linen, minHeight: 82, alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 8, ...shadow },
+  productSmallValue: { color: colors.burgundy, fontSize: 24, fontWeight: '900' },
+  productOwnerValue: { color: colors.burgundy, fontSize: 17, fontWeight: '900', textAlign: 'center' },
+  bidRoomScreen: { backgroundColor: colors.cream },
+  bidAuctionSummary: { backgroundColor: colors.white, borderRadius: 8, borderWidth: 1, borderColor: colors.linen, padding: 12, marginBottom: 14, gap: 12, ...shadow },
+  bidAuctionImage: { width: '100%', height: 135, borderRadius: 6, backgroundColor: colors.linen },
+  bidAuctionImageFallback: { width: '100%', height: 135, borderRadius: 6, backgroundColor: colors.linen, alignItems: 'center', justifyContent: 'center' },
+  bidSummaryTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 },
+  bidSummaryTitle: { flex: 1, color: colors.ink, fontSize: 24, fontWeight: '900' },
+  bidAuctionCard: { backgroundColor: '#EEEADF', padding: 22, marginBottom: 26, ...shadow },
+  bidCoverWrap: { height: 300, borderRadius: 7, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  bidCover: { width: '100%', height: '100%' },
+  bidCoverFallback: { width: '100%', height: '100%', backgroundColor: colors.cream, alignItems: 'center', justifyContent: 'center' },
+  bidCoverWash: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(238, 234, 223, 0.45)' },
+  bidLivePill: { position: 'absolute', alignSelf: 'center', backgroundColor: colors.burgundy, color: colors.cream, borderRadius: 18, paddingHorizontal: 38, paddingVertical: 8, fontSize: 22, fontWeight: '900' },
+  bidAuctionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, gap: 12 },
+  bidAuctionTitle: { flex: 1, color: '#050505', fontSize: 40, lineHeight: 44, fontFamily: Platform.select({ ios: 'Georgia', default: 'serif' }), fontWeight: '900' },
+  bidStatsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 28 },
+  bidStatLabel: { color: colors.ink, fontSize: 17, fontWeight: '700', marginBottom: 6 },
+  bidStatValue: { color: colors.burgundy, fontSize: 34, fontWeight: '900', textAlign: 'center' },
+  bidCurrentLot: { flexDirection: 'row', backgroundColor: colors.white, borderRadius: 8, borderWidth: 1, borderColor: colors.linen, padding: 12, alignItems: 'center', gap: 12, marginBottom: 14 },
+  bidLotImage: { width: 104, height: 92, borderRadius: 7 },
+  bidLotFallback: { width: 104, height: 92, borderRadius: 7, backgroundColor: colors.cream, alignItems: 'center', justifyContent: 'center' },
+  bidLotMain: { flex: 1 },
+  bidLotTitle: { color: colors.ink, fontSize: 20, lineHeight: 23, fontWeight: '900', marginBottom: 12 },
+  bidLotMetaRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  lastOfferCompact: { backgroundColor: colors.white, borderRadius: 8, padding: 14, marginTop: 14, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: colors.burgundy, ...shadow },
+  lastOfferCard: { backgroundColor: '#D0C9B3', borderLeftWidth: 3, borderLeftColor: colors.burgundy, borderRadius: 8, padding: 28, marginBottom: 30, ...shadow },
+  lastOfferHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  lastOfferLabel: { color: '#5F574B', fontSize: 22, lineHeight: 24 },
+  lastOfferValue: { color: colors.burgundy, fontSize: 50, fontFamily: Platform.select({ ios: 'Georgia', default: 'serif' }), fontWeight: '900' },
+  lastOfferUser: { color: '#5F574B', fontSize: 20, marginTop: 18, marginBottom: 42 },
+  previousOfferRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
+  previousOfferText: { color: '#5F574B', fontSize: 22 },
+  previousOfferAmount: { color: '#5F574B', fontSize: 22 },
+  previousOfferMuted: { opacity: 0.55 },
+  bidInputCard: { backgroundColor: colors.cream, borderRadius: 8, padding: 34, ...shadow },
+  bidInputRow: { minHeight: 80, backgroundColor: '#EEEADF', borderRadius: 8, paddingHorizontal: 28, flexDirection: 'row', alignItems: 'center', marginBottom: 38 },
+  bidAmountInput: { flex: 1, color: colors.ink, fontSize: 28 },
+  bidIconCircle: { width: 54, height: 54, borderRadius: 27, borderWidth: 3, borderColor: '#B9975C', alignItems: 'center', justifyContent: 'center' },
+  bidRangeRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 28, marginBottom: 34 },
+  bidRangeBox: { flex: 1, backgroundColor: '#EEEADF', minHeight: 78, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  bidRangeText: { color: colors.burgundy, fontSize: 21, lineHeight: 27, fontWeight: '900', textAlign: 'center' },
   offerLabel: { color: colors.muted, textTransform: 'uppercase', fontWeight: '900', marginTop: 18 },
   offerValue: { color: colors.burgundy, fontSize: 32, fontWeight: '900', marginTop: 2 },
   range: { color: colors.muted, fontWeight: '700', marginVertical: 10 },
@@ -1635,7 +1963,7 @@ const styles = StyleSheet.create({
   historyItem: { backgroundColor: colors.cream, borderRadius: 8, minHeight: 58, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 10 },
   historyTitle: { color: colors.ink, fontSize: 16, fontWeight: '900' },
   pieceCard: { backgroundColor: colors.cream, borderRadius: 8, padding: 14, marginBottom: 18 },
-  pieceImage: { height: 170, borderRadius: 6, marginBottom: 12 },
+  pieceImage: { width: '100%', height: 170, borderRadius: 6, marginBottom: 12, backgroundColor: colors.linen },
   pieceImagePlaceholder: { height: 170, borderRadius: 6, marginBottom: 12, backgroundColor: colors.linen, alignItems: 'center', justifyContent: 'center' },
   pieceTitle: { color: colors.ink, fontSize: 22, fontWeight: '900', marginBottom: 8 },
   pieceInfoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },

@@ -91,14 +91,6 @@ INSERT INTO favoritos (cliente, subasta) VALUES
 INSERT INTO solicitudes_productos (duenio, titulo, descripcion, origen_licito, declaracion_propiedad, acepta_devolucion_cargo, estado, deposito, seguro) VALUES
 (3, 'Muebleria antigua', 'Juego de comedor restaurado con seis sillas.', 'si', 'si', 'si', 'en_revision', 'Deposito Palermo', 'POL-AR-1001');
 
-INSERT INTO solicitudes_fotos (solicitud, url) VALUES
-(1, 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc'),
-(1, 'https://images.unsplash.com/photo-1519710164239-da123dc03ef4'),
-(1, 'https://images.unsplash.com/photo-1567538096630-e0c55bd6374c'),
-(1, 'https://images.unsplash.com/photo-1517705008128-361805f42e86'),
-(1, 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85'),
-(1, 'https://images.unsplash.com/photo-1493663284031-b7e3aefcae8e');
-
 INSERT INTO mensajes (cliente, titulo, cuerpo, tipo) VALUES
 (3, 'Subasta en vivo', 'La subasta "JoyerÃ­a Ruiz" de tu lista de favoritos acaba de empezar.', 'importante'),
 (3, 'Ganaste la subasta', 'Has ganado la puja de la pieza #55 de la subasta "JoyerÃ­a Ruiz". CoordinÃ¡ el envÃ­o.', 'importante'),

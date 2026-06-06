@@ -300,7 +300,7 @@ CREATE TABLE solicitudes_productos (
 CREATE TABLE solicitudes_fotos (
   identificador INT NOT NULL AUTO_INCREMENT,
   solicitud INT NOT NULL,
-  url VARCHAR(500) NOT NULL,
+  url LONGTEXT NOT NULL,
   CONSTRAINT pk_solicitudes_fotos PRIMARY KEY (identificador),
   CONSTRAINT fk_solicitudes_fotos FOREIGN KEY (solicitud) REFERENCES solicitudes_productos(identificador)
 );

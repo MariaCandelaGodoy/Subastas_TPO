@@ -1,4 +1,4 @@
-package com.bidvault.api;
+package com.bidvault.api.exception;
 
 import java.util.Map;
 import org.springframework.dao.DuplicateKeyException;
