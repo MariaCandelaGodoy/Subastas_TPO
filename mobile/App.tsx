@@ -63,7 +63,16 @@ function BidVaultApp() {
   }
   if (route === 'productDetail' && selectedAuction && selectedProduct) return <ProductDetailScreen product={selectedProduct} moneda={selectedCurrency} onBack={() => setRoute('auction')} />;
   if (route === 'bidRoom' && selectedAuction) {
-    return <AuctionLiveScreen auctionId={selectedAuction} initialProduct={selectedProduct} session={session} onBack={() => setRoute('auction')} onPayments={() => { setPaymentBackRoute('bidRoom'); setRoute('payments'); }} />;
+    return <AuctionLiveScreen
+      auctionId={selectedAuction}
+      initialProduct={selectedProduct}
+      session={session}
+      onBack={() => {
+        if (session) api.leaveAuction(session.userId, selectedAuction).finally(() => setRoute('auction'));
+        else setRoute('auction');
+      }}
+      onPayments={() => { setPaymentBackRoute('bidRoom'); setRoute('payments'); }}
+    />;
   }
   if (route === 'selectPayment' && selectedAuction) return session ? <SelectPaymentScreen session={session} auctionId={selectedAuction} onBack={() => setRoute('auction')} onDone={() => setRoute('bidRoom')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'payments') return <PaymentsScreen session={session} onBack={() => setRoute(paymentBackRoute)} />;
@@ -91,9 +100,9 @@ function BidVaultApp() {
   return (
     <View style={{ flex: 1 }}>
       {tab === 'home' && <HomeScreen session={session} onSettings={() => requireSession(() => setRoute('settings'))} onOpenAuction={(id) => { setSelectedAuction(id); setSelectedProduct(null); setRoute('auction'); }} />}
-      {tab === 'upload' && (session ? <UploadScreen session={session} onSettings={() => requireSession(() => setRoute('settings'))} /> : <LoginRequiredScreen onLogin={() => setRoute('login')} />)}
+      {tab === 'upload' && (session ? <UploadScreen session={session} onSettings={() => requireSession(() => setRoute('settings'))} /> : <LoginRequiredScreen title="Nuevo objeto" message="Necesitás una cuenta verificada para subir productos." onLogin={() => setRoute('login')} />)}
       {tab === 'notifications' && <NotificationsScreen session={session} onSettings={() => requireSession(() => setRoute('settings'))} onCoordinate={() => requireSession(() => setRoute('coordinateShipping'))} onTrack={() => requireSession(() => setRoute('shipmentDetail'))} />}
-      {tab === 'profile' && <ProfileScreen session={session} onMetrics={() => requireSession(() => setRoute('metrics'))} onSettings={() => requireSession(() => setRoute('settings'))} />}
+      {tab === 'profile' && (session ? <ProfileScreen session={session} onMetrics={() => requireSession(() => setRoute('metrics'))} onSettings={() => requireSession(() => setRoute('settings'))} /> : <LoginRequiredScreen title="Mi perfil" message="Necesitás iniciar sesión para ver tu perfil, métricas y subastas." onLogin={() => setRoute('login')} />)}
       <BottomTabs active={tab} onChange={setTab} />
     </View>
   );
@@ -191,6 +200,12 @@ function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => 
       const message = 'Ingresá un correo electrónico con formato válido.';
       setErrorMessage(message);
       Alert.alert('Email inválido', message);
+      return;
+    }
+    if (!/^\d+$/.test(form.documento.trim())) {
+      const message = 'El DNI debe contener solo números.';
+      setErrorMessage(message);
+      Alert.alert('DNI inválido', message);
       return;
     }
     const countryOk = countries.some((country) => {
@@ -396,7 +411,7 @@ function HomeScreen({ session, onOpenAuction, onSettings }: { session: UserSessi
 
   return (
     <Screen>
-      <Header name={session ? `${session.nombre} ${session.apellido}` : 'Inicie sesion para poder ver y participar'} category={session?.categoria} onSettings={onSettings} />
+      <Header name={session ? `${session.nombre} ${session.apellido}` : 'Inicie sesion para poder ver y participar'} category={session?.categoria} photoUri={session?.fotoUri} onSettings={onSettings} />
       <View style={styles.homeSearchBox}>
         <TextInput
           value={query}
@@ -775,12 +790,19 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
       {items.map((item) => (
         <View key={item.id} style={styles.paymentCard}>
           <Text style={styles.paymentBrand}>{item.etiqueta}</Text>
-          <Text style={styles.description}>{item.tipo.replaceAll('_', ' ')} / .... .... .... {item.ultimosDigitos}</Text>
+          <Text style={styles.description}>{paymentTypeLabel(item.tipo)} / .... .... .... {item.ultimosDigitos}</Text>
           <Text style={styles.verified}>{item.estado} {item.internacional ? 'INTERNACIONAL' : 'NACIONAL'}</Text>
         </View>
       ))}
     </Screen>
   );
+}
+
+function paymentTypeLabel(type: string) {
+  const normalized = String(type).toUpperCase();
+  if (normalized.includes('TARJETA')) return 'Tarjeta';
+  if (normalized.includes('CHEQUE')) return 'Cheque certificado';
+  return normalized.replaceAll('_', ' ').toLowerCase();
 }
 
 function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: UserSession; auctionId: number; onBack: () => void; onDone: () => void }) {
@@ -838,14 +860,14 @@ function SelectablePayment({ item, selected, onPress }: { item: any; selected: b
   );
 }
 
-function LoginRequiredScreen({ onLogin }: { onLogin: () => void }) {
+function LoginRequiredScreen({ title, message, onLogin }: { title: string; message: string; onLogin: () => void }) {
   return (
     <Screen>
-      <SimpleTitleHeader title="Nuevo objeto" />
+      <SimpleTitleHeader title={title} />
       <View style={styles.guestPanel}>
         <Ionicons name="lock-closed-outline" size={36} color={colors.burgundy} />
         <Text style={styles.sectionTitle}>Iniciá sesión</Text>
-        <Text style={styles.description}>Necesitás una cuenta verificada para subir productos.</Text>
+        <Text style={styles.description}>{message}</Text>
         <PrimaryButton label="Ir al login" onPress={onLogin} />
       </View>
     </Screen>
@@ -856,7 +878,6 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
-  const [days, setDays] = useState('7');
   const [photos, setPhotos] = useState<Array<{ uri: string; name: string; dataUri: string }>>([]);
   const [declared, setDeclared] = useState(true);
   const pickPhotos = async () => {
@@ -929,7 +950,6 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
         <Field label="Titulo" value={title} onChangeText={setTitle} />
         <Field label="Descripcion" value={description} onChangeText={setDescription} multiline placeholder="Condicion, caracteristicas y detalles relevantes..." />
         <Field label="Precio base" value={price} onChangeText={setPrice} keyboardType="numeric" placeholder="0.00" />
-        <Field label="Duracion" value={days} onChangeText={setDays} keyboardType="numeric" placeholder="CANT. DIAS" />
         <Pressable style={styles.photoBox} onPress={pickPhotos}><Ionicons name="images-outline" size={26} color={colors.burgundy} /><Text style={styles.photoText}>{photos.length ? `${photos.length} fotos seleccionadas` : 'Subir al menos 6 fotos'}</Text></Pressable>
         {photos.length ? (
           <View style={styles.photoPreviewGrid}>
@@ -949,6 +969,10 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
 function NotificationsScreen({ session, onSettings, onCoordinate, onTrack }: { session: UserSession | null; onSettings: () => void; onCoordinate: () => void; onTrack: () => void }) {
   const [items, setItems] = useState<any[]>([]);
   useEffect(() => { if (session) api.notifications(session.userId).then((data: any) => setItems(data)); }, [session]);
+  const canTrackShipment = (item: any) => {
+    const text = `${item.titulo ?? ''} ${item.mensaje ?? ''}`.toLowerCase();
+    return text.includes('envío') || text.includes('envio') || text.includes('despach') || text.includes('seguimiento') || text.includes('en camino');
+  };
   return (
     <Screen>
       <SimpleTitleHeader title="Notificaciones" />
@@ -956,12 +980,12 @@ function NotificationsScreen({ session, onSettings, onCoordinate, onTrack }: { s
         <Pressable key={item.id} onPress={String(item.titulo).includes('Ganaste') ? onCoordinate : undefined} style={styles.notification}>
           <Text style={styles.notificationTitle}>{item.titulo}</Text>
           <Text style={styles.description}>{item.mensaje}</Text>
-          {String(item.titulo).includes('Ganaste') ? <Text style={styles.notifAction}>Coordinar envio</Text> : null}
-          {String(item.titulo).includes('Producto') ? <Pressable onPress={onTrack}><Text style={styles.notifAction}>Seguir envio</Text></Pressable> : null}
+          {String(item.titulo).includes('Ganaste') ? <Text style={styles.notifAction}>Coordinar envío</Text> : null}
+          {canTrackShipment(item) && !String(item.titulo).includes('Ganaste') ? <Pressable onPress={onTrack}><Text style={styles.notifAction}>Seguir envío</Text></Pressable> : null}
           <Text style={styles.dateText}>{item.importante ? 'Importante' : 'Otra'} • {new Date(item.creadoEn).toLocaleString()}</Text>
         </Pressable>
       ))}
-      {!session ? <Text style={styles.description}>Inicia sesion para ver tus notificaciones privadas.</Text> : null}
+      {!session ? <Text style={styles.description}>Iniciá sesión para ver tus notificaciones privadas.</Text> : null}
     </Screen>
   );
 }
@@ -1243,8 +1267,23 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
     fotoUri: session.fotoUri ?? '',
     fotoBase64: '',
   });
+  const [countries, setCountries] = useState<Country[]>([]);
   const [saving, setSaving] = useState(false);
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  useEffect(() => {
+    api.countries().then(setCountries).catch(() => setCountries([]));
+    api.profile(session.userId).then((profile) => {
+      setForm((current) => ({
+        ...current,
+        nombre: profile.nombre,
+        apellido: profile.apellido,
+        email: profile.email,
+        domicilio: profile.domicilio ?? '',
+        pais: profile.pais ?? '',
+        fotoUri: profile.fotoUri ?? current.fotoUri,
+      }));
+    }).catch(() => undefined);
+  }, [session.userId]);
   const leave = () => {
     if (session.passwordTemporal) {
       Alert.alert('Cambiar contraseña', 'Primero debes cambiar la contraseña temporal.');
@@ -1301,13 +1340,35 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
       Alert.alert('Campos obligatorios', 'Completá nombre, apellido, email, domicilio y país.');
       return;
     }
+    const namePattern = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+(?:[ '-][A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)*$/;
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!namePattern.test(form.nombre.trim())) {
+      Alert.alert('Nombre inválido', 'El nombre no debe contener números ni caracteres inválidos.');
+      return;
+    }
+    if (!namePattern.test(form.apellido.trim())) {
+      Alert.alert('Apellido inválido', 'El apellido no debe contener números ni caracteres inválidos.');
+      return;
+    }
+    if (!emailPattern.test(form.email.trim())) {
+      Alert.alert('Email inválido', 'Ingresá un correo electrónico con formato válido.');
+      return;
+    }
+    const selectedCountry = countries.find((country) => {
+      const value = form.pais.trim().toLowerCase();
+      return country.nombre.toLowerCase() === value || country.nombreCorto.toLowerCase() === value;
+    });
+    if (!selectedCountry) {
+      Alert.alert('País inválido', countries.length ? `Elegí un país válido: ${countries.map((item) => item.nombre).join(', ')}.` : 'No pudimos validar el país contra la base de datos.');
+      return;
+    }
     if (session.passwordTemporal && !form.password.trim()) {
       Alert.alert('Cambiar contraseña', 'Debes cambiar la contraseña temporal antes de continuar.');
       return;
     }
     setSaving(true);
     try {
-      const updated = await api.updateProfile(session.userId, form);
+      const updated = await api.updateProfile(session.userId, { ...form, pais: selectedCountry.nombre });
       onSaved(updated);
       Alert.alert('Perfil actualizado', 'Tus datos se guardaron correctamente.', [{ text: 'Aceptar', onPress: onBack }]);
     } catch (error) {
@@ -1364,9 +1425,6 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
         <Field label="Pais" value={form.pais} onChangeText={(value: string) => update('pais', value)} />
         <Text style={styles.passwordChangeTitle}>Cambiar contraseña</Text>
         <Field label={session.passwordTemporal ? 'Nueva contraseña *' : 'Nueva contraseña'} value={form.password} onChangeText={(value: string) => update('password', value)} placeholder={session.passwordTemporal ? 'Obligatoria por primer ingreso' : 'Dejar vacia para no cambiar'} secureTextEntry />
-        <Text style={styles.dniLabel}>Saque foto al frente y dorso del DNI</Text>
-        <View style={styles.dniPhoto}><Ionicons name="camera-outline" size={28} color={colors.gold} /></View>
-        <View style={styles.dniPhoto}><Ionicons name="camera-outline" size={28} color={colors.gold} /></View>
       </View>
       <PrimaryButton label={saving ? 'Guardando...' : 'Aceptar'} onPress={save} disabled={saving} />
       <Pressable onPress={leave} style={styles.cancelButton}><Text style={styles.cancelText}>Cancelar</Text></Pressable>
@@ -1494,9 +1552,26 @@ function MyPiecesScreen({ session, onBack }: { session: UserSession; onBack: () 
   const [filter, setFilter] = useState<'ACTIVAS' | 'EN SUBASTA' | 'EN REVISION'>('ACTIVAS');
   const [query, setQuery] = useState('');
   const [pieces, setPieces] = useState<any[]>([]);
-  useEffect(() => {
-    api.myPieces(session.userId).then(setPieces).catch(() => setPieces([]));
-  }, [session.userId]);
+  const loadPieces = () => api.myPieces(session.userId).then(setPieces).catch(() => setPieces([]));
+  useEffect(() => { loadPieces(); }, [session.userId]);
+  const acceptProposal = async (piece: any) => {
+    try {
+      await api.acceptPieceProposal(session.userId, piece.id);
+      Alert.alert('Propuesta aceptada', 'La pieza quedó aceptada para avanzar con la subasta.');
+      await loadPieces();
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos aceptar la propuesta.');
+    }
+  };
+  const rejectProposal = async (piece: any) => {
+    try {
+      await api.rejectPieceProposal(session.userId, piece.id);
+      Alert.alert('Propuesta rechazada', 'La empresa fue notificada del rechazo.');
+      await loadPieces();
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos rechazar la propuesta.');
+    }
+  };
   const normalized = query.trim().toLowerCase();
   const visiblePieces = pieces.filter((piece) => {
     const text = `${piece.titulo} ${piece.descripcion} ${piece.estado}`.toLowerCase();
@@ -1506,7 +1581,7 @@ function MyPiecesScreen({ session, onBack }: { session: UserSession; onBack: () 
       ? ['pendiente', 'en_revision'].includes(status)
       : filter === 'EN SUBASTA'
         ? ['en_subasta'].includes(status)
-        : ['aceptado'].includes(status);
+        : status === 'aceptado' || (Boolean(piece.propuestaId) && piece.propuestaEstado === 'pendiente_usuario');
     return matchesText && matchesTab;
   });
   return (
@@ -1523,7 +1598,7 @@ function MyPiecesScreen({ session, onBack }: { session: UserSession; onBack: () 
           </Pressable>
         ))}
       </View>
-      {visiblePieces.map((piece) => <PieceRequestCard key={piece.id} piece={piece} />)}
+      {visiblePieces.map((piece) => <PieceRequestCard key={piece.id} piece={piece} onAccept={() => acceptProposal(piece)} onReject={() => rejectProposal(piece)} />)}
       {visiblePieces.length === 0 ? <Text style={styles.emptyText}>No encontramos piezas con esa busqueda.</Text> : null}
     </Screen>
   );
@@ -1616,15 +1691,45 @@ function AddressCard({ title, subtitle, tag, selected }: { title: string; subtit
   );
 }
 
-function PieceRequestCard({ piece }: { piece: any }) {
+function PieceRequestCard({ piece, onAccept, onReject }: { piece: any; onAccept?: () => void; onReject?: () => void }) {
+  const hasProposal = Boolean(piece.propuestaId) && piece.propuestaEstado === 'pendiente_usuario';
+  const formatDate = (value?: string) => {
+    const [year, month, day] = String(value || '').split('-');
+    return year && month && day ? `${day}/${month}/${year}` : value ?? '';
+  };
   return (
     <View style={styles.pieceCard}>
       {piece.foto ? <Image source={{ uri: piece.foto }} style={styles.pieceImage} resizeMode="cover" /> : <View style={styles.pieceImagePlaceholder}><Ionicons name="image-outline" size={38} color={colors.gold} /></View>}
       <Text style={styles.pieceTitle}>{piece.titulo}</Text>
       <Text style={styles.description}>{piece.descripcion}</Text>
-      <Text style={styles.verified}>Estado: {String(piece.estado).replace('_', ' ').toUpperCase()}</Text>
-      {piece.seguro ? <Text style={styles.description}>Póliza: {piece.seguro}</Text> : null}
-      {piece.deposito ? <Text style={styles.description}>Depósito: {piece.deposito}</Text> : null}
+      {hasProposal ? (
+        <>
+          <View style={styles.proposalGrid}>
+            <ProposalDatum label="Fecha & hora" value={`${formatDate(piece.fechaSubasta)}\n${String(piece.horaSubasta ?? '').slice(0, 5)}hs`} />
+            <ProposalDatum label="Ubicación" value={piece.ubicacion ?? ''} />
+            <ProposalDatum label="Precio" value={`$ ${Number(piece.precioBase ?? 0).toLocaleString()} ${piece.moneda ?? ''}`} />
+            <ProposalDatum label="Comisión" value={`${Number(piece.comision ?? 0)}%`} />
+          </View>
+          <Text style={styles.proposalPolicy}>Póliza de seguro <Text style={styles.nextStrong}>{piece.polizaCompania ?? ''} {piece.polizaNumero ?? piece.seguro ?? ''}</Text> <Text style={styles.successText}>{piece.polizaCobertura ?? ''}</Text></Text>
+          <PrimaryButton label="Aceptar Propuesta" onPress={onAccept ?? (() => undefined)} />
+          <Pressable onPress={onReject} style={styles.cancelButton}><Text style={styles.cancelText}>Rechazar</Text></Pressable>
+        </>
+      ) : (
+        <>
+          <Text style={styles.verified}>Estado: {String(piece.estado).replace('_', ' ').toUpperCase()}</Text>
+          {piece.seguro ? <Text style={styles.description}>Póliza: {piece.seguro}</Text> : null}
+          {piece.deposito ? <Text style={styles.description}>Depósito: {piece.deposito}</Text> : null}
+        </>
+      )}
+    </View>
+  );
+}
+
+function ProposalDatum({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.proposalDatum}>
+      <Text style={styles.proposalLabel}>{label}</Text>
+      <Text style={styles.proposalValue}>{value}</Text>
     </View>
   );
 }
@@ -1966,6 +2071,12 @@ const styles = StyleSheet.create({
   pieceImage: { width: '100%', height: 170, borderRadius: 6, marginBottom: 12, backgroundColor: colors.linen },
   pieceImagePlaceholder: { height: 170, borderRadius: 6, marginBottom: 12, backgroundColor: colors.linen, alignItems: 'center', justifyContent: 'center' },
   pieceTitle: { color: colors.ink, fontSize: 22, fontWeight: '900', marginBottom: 8 },
+  proposalGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 18, marginTop: 18, marginBottom: 12 },
+  proposalDatum: { width: '50%', paddingRight: 12 },
+  proposalLabel: { color: colors.ink, fontSize: 12, fontWeight: '900', textTransform: 'uppercase', marginBottom: 5 },
+  proposalValue: { color: colors.ink, fontSize: 17, lineHeight: 21, fontWeight: '700' },
+  proposalPolicy: { color: colors.ink, fontSize: 15, lineHeight: 21, marginTop: 10, marginBottom: 12 },
+  successText: { color: colors.success, fontWeight: '800' },
   pieceInfoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   pieceInfo: { color: colors.ink, width: '46%', fontSize: 11, lineHeight: 16, marginBottom: 8 },
   liveBadge: { alignSelf: 'center', backgroundColor: colors.burgundy, color: colors.cream, paddingHorizontal: 14, paddingVertical: 5, fontWeight: '900', marginTop: -46, marginBottom: 26 },

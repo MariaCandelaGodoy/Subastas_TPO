@@ -89,16 +89,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   } catch (error) {
     const aborted = error instanceof Error && error.name === 'AbortError';
     if (aborted) {
-      throw new Error(`El backend no respondiÃ³ en ${API_URL}. VerificÃ¡ que Spring Boot estÃ© levantado.`);
+      throw new Error(`El backend no respondió en ${API_URL}. Verificá que Spring Boot esté levantado.`);
     }
-    throw new Error(`No se pudo conectar con el backend en ${API_URL}. VerificÃ¡ que Spring Boot estÃ© levantado y que Expo use la IP correcta.`);
+    throw new Error(`No se pudo conectar con el backend en ${API_URL}. Verificá que Spring Boot esté levantado y que Expo use la IP correcta.`);
   } finally {
     clearTimeout(timeout);
   }
   const body = await response.text();
   const payload = body ? JSON.parse(body) : null;
   if (!response.ok) {
-    throw new Error(payload?.error ?? payload?.message ?? 'No pudimos completar la operaciÃ³n.');
+    throw new Error(payload?.error ?? payload?.message ?? 'No pudimos completar la operación.');
   }
   return payload as T;
 }
@@ -167,7 +167,7 @@ function mapProduct(raw: any, auction: AuctionSummary): ProductItem {
 
 export const api = {
   login: async (email: string, password: string) => {
-    if (!email.trim() || !password.trim()) throw new Error('IngresÃ¡ email y contraseÃ±a.');
+    if (!email.trim() || !password.trim()) throw new Error('Ingresá email y contraseña.');
     try {
       return mapUser(await request('/auth/login', {
         method: 'POST',
@@ -252,6 +252,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ cliente_id: payload.userId, medio_pago_id: payload.paymentMethodId }),
     }),
+  leaveAuction: async (userId: number, auctionId: number) =>
+    request(`/auctions/${auctionId}/leave`, {
+      method: 'POST',
+      body: JSON.stringify({ cliente_id: userId }),
+    }),
   metrics: async (userId: number) => {
     const payload = await request<any>(`/profile/${userId}/metrics`);
     const profile = payload.profile ?? {};
@@ -271,6 +276,7 @@ export const api = {
       history,
     };
   },
+  profile: async (userId: number) => mapUser({ token: '', user: await request<any>(`/profile/${userId}`) }),
   updateProfile: async (userId: number, payload: Record<string, string>) => {
     const updated = await request<any>(`/profile/${userId}`, {
       method: 'PUT',
@@ -384,8 +390,23 @@ export const api = {
       foto: item.foto,
       deposito: item.deposito,
       seguro: item.seguro,
+      propuestaId: item.propuesta_id,
+      propuestaEstado: item.propuesta_estado,
+      fechaSubasta: item.fecha_subasta,
+      horaSubasta: item.hora_subasta,
+      ubicacion: item.propuesta_ubicacion,
+      precioBase: item.propuesta_precio_base,
+      moneda: item.propuesta_moneda,
+      comision: item.propuesta_comision,
+      polizaCompania: item.poliza_compania,
+      polizaNumero: item.poliza_numero,
+      polizaCobertura: item.poliza_cobertura,
     }));
   },
+  acceptPieceProposal: (userId: number, pieceId: number) =>
+    request(`/my-pieces/${pieceId}/proposal/accept`, { method: 'PUT', body: JSON.stringify({ cliente_id: userId }) }),
+  rejectPieceProposal: (userId: number, pieceId: number) =>
+    request(`/my-pieces/${pieceId}/proposal/reject`, { method: 'PUT', body: JSON.stringify({ cliente_id: userId }) }),
   shipments: (userId: number) => request(`/shipping/shipments?userId=${userId}`),
   pendingShippingPurchases: (userId: number) => request(`/purchases/pending-shipping?userId=${userId}`),
   invoices: (userId: number) => request(`/invoices?userId=${userId}`),

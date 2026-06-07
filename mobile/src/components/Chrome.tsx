@@ -21,12 +21,12 @@ export function RankBadge({ category }: { category?: string }) {
   return <Image source={source} style={[styles.rankBadge, key === 'ORO' && styles.rankBadgeOro]} resizeMode="contain" />;
 }
 
-export function Header({ name, category, onSettings }: { name?: string; category?: string; onSettings?: () => void }) {
+export function Header({ name, category, photoUri, onSettings }: { name?: string; category?: string; photoUri?: string; onSettings?: () => void }) {
   return (
     <View style={styles.header}>
       <View style={styles.userRow}>
         <View style={styles.avatar}>
-          <Image source={require('../../assets/user-avatar.png')} style={styles.avatarImage} />
+          <Image source={photoUri ? { uri: photoUri } : require('../../assets/user-avatar.png')} style={styles.avatarImage} />
         </View>
         <Text style={styles.userName}>{name ? `${name}` : 'BidVault'}</Text>
         <RankBadge category={category} />

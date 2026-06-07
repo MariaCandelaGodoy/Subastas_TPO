@@ -48,6 +48,7 @@
     </dependency>
   </dependencies>
   <build>
+    <directory>${project.basedir}/target-maven</directory>
     <plugins>
       <plugin>
         <groupId>org.springframework.boot</groupId>
