@@ -387,6 +387,7 @@ export const api = {
       titulo: item.titulo,
       descripcion: item.descripcion,
       estado: item.estado,
+      motivoRechazo: item.motivo_rechazo,
       foto: item.foto,
       deposito: item.deposito,
       seguro: item.seguro,

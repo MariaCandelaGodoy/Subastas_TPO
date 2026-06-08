@@ -11,7 +11,7 @@ UPDATE solicitudes_productos
 SET estado = 'devuelto',
     motivo_rechazo = CONCAT(COALESCE(motivo_rechazo, 'Producto no aceptado.'), ' Devolucion con cargo: ', @costo_devolucion, '. Direccion: ', @direccion_devolucion)
 WHERE identificador = @solicitud_id
-  AND estado = 'rechazado';
+  AND estado IN ('en_revision', 'rechazado', 'devuelto');
 
 INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
 SELECT duenio,

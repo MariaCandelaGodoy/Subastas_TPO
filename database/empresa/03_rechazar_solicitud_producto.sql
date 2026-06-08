@@ -1,7 +1,7 @@
 USE bidvault;
 
 -- Cambiar estos valores antes de ejecutar.
-SET @solicitud_id = 1;
+SET @solicitud_id = 3;
 SET @motivo_rechazo = 'La inspeccion detecto inconsistencias en la documentacion de origen licito.';
 
 START TRANSACTION;

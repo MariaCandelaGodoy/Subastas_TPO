@@ -731,7 +731,8 @@ public class ApiController {
         proposal.get("propuesta_id"));
     jdbc.update("""
         UPDATE solicitudes_productos
-        SET estado='rechazado', motivo_rechazo='El usuario rechazo la propuesta de precio base y comision de la empresa.'
+        SET estado='devuelto',
+            motivo_rechazo='El usuario rechazo la propuesta de precio base y comision de la empresa. Devolucion con cargo pendiente de liquidacion por la empresa.'
         WHERE identificador=? AND duenio=?
         """, solicitudId, request.clienteId());
     return one("SELECT identificador id, titulo, estado, motivo_rechazo FROM solicitudes_productos WHERE identificador=?",
@@ -929,4 +930,3 @@ public class ApiController {
   public record PayInvoiceRequest(int userId, int paymentMethodId) {}
   public record AuctionCoverRequest(String imagen, String mimeType, String descripcion) {}
 }
-

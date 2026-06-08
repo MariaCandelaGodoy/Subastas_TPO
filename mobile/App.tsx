@@ -1577,11 +1577,13 @@ function MyPiecesScreen({ session, onBack }: { session: UserSession; onBack: () 
     const text = `${piece.titulo} ${piece.descripcion} ${piece.estado}`.toLowerCase();
     const matchesText = !normalized || text.includes(normalized);
     const status = String(piece.estado).toLowerCase();
+    const motivo = String(piece.motivoRechazo ?? '').toLowerCase();
+    const userRejectedProposal = status === 'devuelto' && motivo.includes('usuario rechazo') && motivo.includes('devolucion con cargo');
     const matchesTab = filter === 'EN REVISION'
-      ? ['pendiente', 'en_revision'].includes(status)
+      ? ['pendiente', 'en_revision', 'rechazado'].includes(status) || (status === 'devuelto' && !userRejectedProposal)
       : filter === 'EN SUBASTA'
         ? ['en_subasta'].includes(status)
-        : status === 'aceptado' || (Boolean(piece.propuestaId) && piece.propuestaEstado === 'pendiente_usuario');
+        : status === 'aceptado' || userRejectedProposal || (Boolean(piece.propuestaId) && piece.propuestaEstado === 'pendiente_usuario');
     return matchesText && matchesTab;
   });
   return (
@@ -1692,7 +1694,10 @@ function AddressCard({ title, subtitle, tag, selected }: { title: string; subtit
 }
 
 function PieceRequestCard({ piece, onAccept, onReject }: { piece: any; onAccept?: () => void; onReject?: () => void }) {
-  const hasProposal = Boolean(piece.propuestaId) && piece.propuestaEstado === 'pendiente_usuario';
+  const status = String(piece.estado ?? '').toLowerCase();
+  const motivo = String(piece.motivoRechazo ?? '').toLowerCase();
+  const hasProposal = status === 'en_revision' && Boolean(piece.propuestaId) && piece.propuestaEstado === 'pendiente_usuario';
+  const hasReturnCharge = status === 'devuelto' && motivo.includes('devolucion con cargo');
   const formatDate = (value?: string) => {
     const [year, month, day] = String(value || '').split('-');
     return year && month && day ? `${day}/${month}/${year}` : value ?? '';
@@ -1717,6 +1722,8 @@ function PieceRequestCard({ piece, onAccept, onReject }: { piece: any; onAccept?
       ) : (
         <>
           <Text style={styles.verified}>Estado: {String(piece.estado).replace('_', ' ').toUpperCase()}</Text>
+          {hasReturnCharge ? <Text style={styles.verified}>Cargo por devolución pendiente</Text> : null}
+          {piece.motivoRechazo ? <Text style={styles.description}>Motivo: {piece.motivoRechazo}</Text> : null}
           {piece.seguro ? <Text style={styles.description}>Póliza: {piece.seguro}</Text> : null}
           {piece.deposito ? <Text style={styles.description}>Depósito: {piece.deposito}</Text> : null}
         </>

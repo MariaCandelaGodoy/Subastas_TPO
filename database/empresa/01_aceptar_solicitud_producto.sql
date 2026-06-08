@@ -1,8 +1,8 @@
 USE bidvault;
 
 -- Cambiar estos valores antes de ejecutar.
-SET @solicitud_id = 1;
-SET @revisor_id = 1;
+SET @solicitud_id = 3;
+SET @revisor_id = 3;
 SET @seguro = 'POL-AR-1001';
 SET @deposito = 'Deposito Central - Boveda 2';
 SET @fecha_subasta = '2026-06-08';
