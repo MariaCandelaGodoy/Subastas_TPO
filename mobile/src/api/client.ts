@@ -16,6 +16,27 @@ if (__DEV__) {
   console.info(`BidVault API: ${API_URL}`);
 }
 
+function userFacingError(message?: string) {
+  const value = String(message || '').trim();
+  if (!value) return 'No pudimos completar la operación.';
+  const technicalPatterns = [
+    'PreparedStatementCallback',
+    'bad SQL grammar',
+    'SQLException',
+    'SQLIntegrityConstraintViolationException',
+    'ConstraintViolationException',
+    'NullPointerException',
+    'java.lang',
+    'org.springframework',
+    'Cannot add or update a child row',
+    'foreign key constraint fails',
+  ];
+  if (technicalPatterns.some((pattern) => value.toLowerCase().includes(pattern.toLowerCase()))) {
+    return 'No pudimos completar la operación. Revisá los datos e intentá nuevamente.';
+  }
+  return value;
+}
+
 export type UserSession = {
   token: string;
   userId: number;
@@ -89,16 +110,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   } catch (error) {
     const aborted = error instanceof Error && error.name === 'AbortError';
     if (aborted) {
-      throw new Error(`El backend no respondió en ${API_URL}. Verificá que Spring Boot esté levantado.`);
+      throw new Error('El backend no respondió. Verificá que Spring Boot esté levantado.');
     }
-    throw new Error(`No se pudo conectar con el backend en ${API_URL}. Verificá que Spring Boot esté levantado y que Expo use la IP correcta.`);
+    throw new Error('No pudimos conectar con el backend. Verificá que Spring Boot esté levantado y que Expo use la IP correcta.');
   } finally {
     clearTimeout(timeout);
   }
   const body = await response.text();
   const payload = body ? JSON.parse(body) : null;
   if (!response.ok) {
-    throw new Error(payload?.error ?? payload?.message ?? 'No pudimos completar la operación.');
+    throw new Error(userFacingError(payload?.error ?? payload?.message));
   }
   return payload as T;
 }
@@ -178,6 +199,13 @@ export const api = {
       if (message.includes('backend') || message.includes('conectar') || message.includes('respondi')) throw new Error(message);
       throw new Error('El mail o la clave son incorrectos o no te encuentras registrado.');
     }
+  },
+  forgotPassword: async (email: string) => {
+    if (!email.trim()) throw new Error('Ingresá tu email.');
+    await request('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    });
   },
   register: async (payload: Record<string, string>) => {
     const created = await request<any>('/auth/register', {

@@ -62,8 +62,41 @@ public class ApiController {
       throw new ApiException(HttpStatus.UNAUTHORIZED, "El mail o la clave son incorrectos o no te encuentras registrado");
     }
     var user = users.get(0);
+    if (!"si".equals(user.get("admitido"))) {
+      throw new ApiException(HttpStatus.FORBIDDEN, "Tu cuenta todavia esta pendiente de validacion.");
+    }
     user.remove("password_hash");
     return Map.of("token", "demo-token-" + user.get("usuario_id"), "user", user);
+  }
+
+  @PostMapping("/auth/forgot-password")
+  @Transactional
+  Map<String, Object> forgotPassword(@RequestBody Map<String, String> request) {
+    String rawEmail = request.get("email");
+    require(rawEmail, "El email es obligatorio");
+    String email = rawEmail.trim().toLowerCase();
+    var users = jdbc.queryForList("""
+        SELECT u.identificador usuario_id, p.nombre, c.admitido
+        FROM usuarios_app u
+        JOIN personas p ON p.identificador = u.persona
+        LEFT JOIN clientes c ON c.identificador = p.identificador
+        WHERE u.email = ?
+        """, email);
+    if (users.isEmpty()) {
+      return Map.of("enviado", true);
+    }
+    var user = users.get(0);
+    if (!"si".equals(user.get("admitido"))) {
+      throw new ApiException(HttpStatus.FORBIDDEN, "Tu cuenta todavia esta pendiente de validacion.");
+    }
+    String temporaryPassword = temporaryPassword();
+    jdbc.update("""
+        UPDATE usuarios_app
+        SET password_hash=?, password_temporal='si'
+        WHERE identificador=?
+        """, encoder.encode(temporaryPassword), user.get("usuario_id"));
+    emailService.sendTemporaryPassword(email, Objects.toString(user.get("nombre"), "Usuario"), temporaryPassword);
+    return Map.of("enviado", true);
   }
 
   @PostMapping("/auth/register")
@@ -93,13 +126,12 @@ public class ApiController {
         request.documento(), request.nombre() + " " + request.apellido(), request.direccion());
     jdbc.update("""
         INSERT INTO clientes (identificador, numeroPais, admitido, categoria, verificador)
-        VALUES (?, ?, 'si', 'comun', 1)
+        VALUES (?, ?, 'no', 'comun', 1)
         """, personaId, numeroPais);
     jdbc.update("""
         INSERT INTO duenios (identificador, numeroPais, `verificaciónFinanciera`, `verificaciónJudicial`, calificacionRiesgo, verificador)
         VALUES (?, ?, 'no', 'no', 6, 1)
         """, personaId, numeroPais);
-    String fullName = request.nombre().trim() + " " + request.apellido().trim();
     String temporaryPassword = temporaryPassword();
     jdbc.update("""
         INSERT INTO usuarios_app (persona, email, password_hash, password_temporal, rol)
@@ -113,8 +145,7 @@ public class ApiController {
         INSERT INTO documentos_verificacion (persona, tipo_documento, frente, dorso, estado, observacion)
         VALUES (?, 'DNI', ?, ?, 'aprobada_simulada', 'Validacion simulada desde el registro')
         """, personaId, decodeBase64Image(request.dniFrenteBase64()), decodeBase64Image(request.dniDorsoBase64()));
-    emailService.sendTemporaryPassword(email, fullName, temporaryPassword);
-    return Map.of("persona_id", personaId, "estado", "verificacion_aprobada_simulada");
+    return Map.of("persona_id", personaId, "estado", "pendiente_validacion");
   }
 
   @GetMapping("/countries")
@@ -930,3 +961,6 @@ public class ApiController {
   public record PayInvoiceRequest(int userId, int paymentMethodId) {}
   public record AuctionCoverRequest(String imagen, String mimeType, String descripcion) {}
 }
+
+
+

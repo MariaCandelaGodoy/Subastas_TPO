@@ -7,7 +7,7 @@ import { BottomTabs, Header, RankBadge, TabKey } from './src/components/Chrome';
 import { Screen } from './src/components/Screen';
 import { colors, shadow } from './src/theme/theme';
 
-type Route = 'splash' | 'login' | 'register' | 'terms' | 'app' | 'auction' | 'productDetail' | 'bidRoom' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'purchaseInvoice' | 'shipmentDetail' | 'myPieces' | 'metrics';
+type Route = 'splash' | 'login' | 'forgotPassword' | 'register' | 'terms' | 'app' | 'auction' | 'productDetail' | 'bidRoom' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'purchaseInvoice' | 'shipmentDetail' | 'myPieces' | 'metrics';
 type AuctionFilter = 'EN_VIVO' | 'FAVORITAS' | 'PROGRAMADA';
 
 function imageSource(value?: string | null) {
@@ -55,13 +55,14 @@ function BidVaultApp() {
   };
 
   if (route === 'splash') return <SplashScreen />;
-  if (route === 'login') return <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => { setTermsBackRoute('login'); setRoute('terms'); }} />;
+  if (route === 'login') return <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => { setTermsBackRoute('login'); setRoute('terms'); }} />;
+  if (route === 'forgotPassword') return <ForgotPasswordScreen onBack={() => setRoute('login')} />;
   if (route === 'terms') return <TermsScreen onBack={() => setRoute(termsBackRoute)} />;
   if (route === 'register') return <RegisterScreen onDone={() => setRoute('login')} onBack={() => setRoute('login')} />;
   if (route === 'auction' && selectedAuction) {
     return <AuctionDetailScreen auctionId={selectedAuction} session={session} onBack={() => setRoute('app')} onJoin={() => session ? setRoute('selectPayment') : setRoute('login')} onProduct={(product, moneda) => { setSelectedProduct(product); setSelectedCurrency(moneda); setRoute('productDetail'); }} />;
   }
-  if (route === 'productDetail' && selectedAuction && selectedProduct) return <ProductDetailScreen product={selectedProduct} moneda={selectedCurrency} onBack={() => setRoute('auction')} />;
+  if (route === 'productDetail' && selectedAuction && selectedProduct) return <ProductDetailScreen product={selectedProduct} moneda={selectedCurrency} showPrices={Boolean(session)} onBack={() => setRoute('auction')} />;
   if (route === 'bidRoom' && selectedAuction) {
     return <AuctionLiveScreen
       auctionId={selectedAuction}
@@ -74,15 +75,15 @@ function BidVaultApp() {
       onPayments={() => { setPaymentBackRoute('bidRoom'); setRoute('payments'); }}
     />;
   }
-  if (route === 'selectPayment' && selectedAuction) return session ? <SelectPaymentScreen session={session} auctionId={selectedAuction} onBack={() => setRoute('auction')} onDone={() => setRoute('bidRoom')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'selectPayment' && selectedAuction) return session ? <SelectPaymentScreen session={session} auctionId={selectedAuction} onBack={() => setRoute('auction')} onDone={() => setRoute('bidRoom')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'payments') return <PaymentsScreen session={session} onBack={() => setRoute(paymentBackRoute)} />;
-  if (route === 'editProfile') return session ? <EditProfileScreen session={session} onBack={() => setRoute('settings')} onSaved={(updated) => setSession({ ...session, ...updated, token: session.token })} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
-  if (route === 'shipping') return session ? <ShippingScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
-  if (route === 'coordinateShipping') return session ? <CoordinateShippingScreen session={session} onBack={() => setRoute('app')} onDone={(shipment) => { setSelectedShipment(shipment); setSelectedInvoice(shipment); setRoute('purchaseInvoice'); }} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
-  if (route === 'purchaseInvoice') return session ? <PurchaseInvoiceScreen session={session} invoice={selectedInvoice} onBack={() => setRoute('shipping')} onDone={() => setRoute('shipmentDetail')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
-  if (route === 'shipmentDetail') return session ? <ShipmentDetailScreen session={session} shipment={selectedShipment} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
-  if (route === 'myPieces') return session ? <MyPiecesScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
-  if (route === 'metrics') return session ? <MetricsScreen session={session} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'editProfile') return session ? <EditProfileScreen session={session} onBack={() => setRoute('settings')} onSaved={(updated) => setSession({ ...session, ...updated, token: session.token })} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'shipping') return session ? <ShippingScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'coordinateShipping') return session ? <CoordinateShippingScreen session={session} onBack={() => setRoute('app')} onDone={(shipment) => { setSelectedShipment(shipment); setSelectedInvoice(shipment); setRoute('purchaseInvoice'); }} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'purchaseInvoice') return session ? <PurchaseInvoiceScreen session={session} invoice={selectedInvoice} onBack={() => setRoute('shipping')} onDone={() => setRoute('shipmentDetail')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'shipmentDetail') return session ? <ShipmentDetailScreen session={session} shipment={selectedShipment} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'myPieces') return session ? <MyPiecesScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'metrics') return session ? <MetricsScreen session={session} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'settings') {
     return (
       <SettingsScreen
@@ -136,7 +137,7 @@ function SplashScreen() {
   );
 }
 
-function LoginScreen({ onLogin, onRegister, onGuest, onTerms }: { onLogin: (user: UserSession) => void; onRegister: () => void; onGuest: () => void; onTerms: () => void }) {
+function LoginScreen({ onLogin, onRegister, onForgot, onGuest, onTerms }: { onLogin: (user: UserSession) => void; onRegister: () => void; onForgot: () => void; onGuest: () => void; onTerms: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -163,9 +164,50 @@ function LoginScreen({ onLogin, onRegister, onGuest, onTerms }: { onLogin: (user
       <Field label="Email" icon="mail-outline" value={email} onChangeText={setEmail} autoCapitalize="none" />
       <PasswordField value={password} onChangeText={setPassword} visible={showPassword} onToggle={() => setShowPassword((current) => !current)} />
       <PrimaryButton label={loading ? 'Ingresando...' : 'Iniciar sesion'} onPress={submit} disabled={loading} />
+      <Pressable onPress={onForgot} style={styles.recoveryButton}>
+        <Ionicons name="key-outline" size={18} color={colors.burgundy} />
+        <Text style={styles.recoveryButtonText}>Olvidé mi contraseña</Text>
+      </Pressable>
       <Pressable onPress={onRegister}><Text style={styles.link}>No tenes cuenta? Registrate</Text></Pressable>
       <Pressable onPress={onGuest}><Text style={styles.secondaryLink}>Iniciar sesion mas tarde</Text></Pressable>
       <Pressable onPress={onTerms}><Text style={styles.terms}>Al continuar aceptas nuestros Terminos y Condiciones</Text></Pressable>
+    </Screen>
+  );
+}
+
+function ForgotPasswordScreen({ onBack }: { onBack: () => void }) {
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    if (!email.trim()) {
+      Alert.alert('Email requerido', 'Ingresá el email de tu cuenta.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.forgotPassword(email);
+      Alert.alert('Revisá tu correo', 'Si tu cuenta ya está validada, te enviamos una contraseña temporal.', [
+        { text: 'OK', onPress: onBack },
+      ]);
+    } catch (error) {
+      Alert.alert('No pudimos enviar la clave', error instanceof Error ? error.message : 'Intentá nuevamente más tarde.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Screen>
+      <BackButton onPress={onBack} />
+      <View style={styles.brandBlock}>
+        <Text style={styles.brand}>BidVault</Text>
+        <Text style={styles.brandSub}>Recuperación de acceso</Text>
+      </View>
+      <Text style={styles.largeTitle}>Recuperar contraseña</Text>
+      <Text style={styles.helperText}>Ingresá el correo con el que te registraste. Si la cuenta ya fue validada, te vamos a enviar una contraseña temporal.</Text>
+      <Field label="Email" icon="mail-outline" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+      <PrimaryButton label={loading ? 'Enviando...' : 'Enviar contraseña temporal'} onPress={submit} disabled={loading} />
     </Screen>
   );
 }
@@ -227,7 +269,7 @@ function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => 
     setLoading(true);
     try {
       await api.register(form);
-      Alert.alert('Registrado', 'Te enviamos una contraseña temporal por correo. Inicia sesion con esa clave para cambiarla.');
+      Alert.alert('Registro recibido', 'Tu cuenta quedó pendiente de validación. Cuando sea aprobada, pedí tu contraseña temporal desde el login.');
       onDone();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Revisá los campos obligatorios.';
@@ -538,13 +580,13 @@ function AuctionDetailScreen({
         </View>
       </View>
       <View style={styles.catalogBand}>
-        {detail.products.map((product) => <CatalogProductCard key={product.id} product={product} moneda={detail.auction.moneda} onPress={() => onProduct(product, detail.auction.moneda)} />)}
+        {detail.products.map((product) => <CatalogProductCard key={product.id} product={product} moneda={detail.auction.moneda} showPrices={Boolean(session)} onPress={() => onProduct(product, detail.auction.moneda)} />)}
       </View>
     </Screen>
   );
 }
 
-function ProductDetailScreen({ product, moneda, onBack }: { product: ProductItem; moneda: string; onBack: () => void }) {
+function ProductDetailScreen({ product, moneda, showPrices, onBack }: { product: ProductItem; moneda: string; showPrices: boolean; onBack: () => void }) {
   const [active, setActive] = useState(product.imagenes[0]);
   const mainSource = imageSource(active ?? product.imagenes[0]);
   return (
@@ -566,8 +608,8 @@ function ProductDetailScreen({ product, moneda, onBack }: { product: ProductItem
         <Text style={styles.productDescriptionTitle}>Descripción</Text>
         <Text style={styles.productDescriptionText}>{product.descripcion}</Text>
         <View style={styles.productPriceBox}>
-          <Text style={styles.productInfoLabel}>PRECIO{'\n'}BASE</Text>
-          <Text style={styles.productPriceValue}>${product.precioBase.toLocaleString()} {moneda}</Text>
+          <Text style={styles.productInfoLabel}>{showPrices ? 'PRECIO\nBASE' : 'MONEDA'}</Text>
+          <Text style={styles.productPriceValue}>{showPrices ? `$${product.precioBase.toLocaleString()} ${moneda}` : moneda}</Text>
         </View>
         <View style={styles.productInfoRow}>
           <View style={styles.productSmallBox}>
@@ -584,7 +626,7 @@ function ProductDetailScreen({ product, moneda, onBack }: { product: ProductItem
   );
 }
 
-function CatalogProductCard({ product, moneda, onPress }: { product: ProductItem; moneda: string; onPress: () => void }) {
+function CatalogProductCard({ product, moneda, showPrices, onPress }: { product: ProductItem; moneda: string; showPrices: boolean; onPress: () => void }) {
   const source = imageSource(product.imagenes[0]);
   return (
     <View style={styles.catalogProductCard}>
@@ -593,8 +635,8 @@ function CatalogProductCard({ product, moneda, onPress }: { product: ProductItem
       <Text style={styles.catalogProductDescription} numberOfLines={2}>{product.descripcion}</Text>
       <View style={styles.catalogProductFooter}>
         <View>
-          <Text style={styles.catalogProductMeta}>Precio base</Text>
-          <Text style={styles.catalogProductPrice}>${product.precioBase.toLocaleString()} {moneda}</Text>
+          <Text style={styles.catalogProductMeta}>{showPrices ? 'Precio base' : 'Moneda'}</Text>
+          <Text style={styles.catalogProductPrice}>{showPrices ? `$${product.precioBase.toLocaleString()} ${moneda}` : moneda}</Text>
         </View>
         <View>
           <Text style={styles.catalogProductMeta}>Pieza</Text>
@@ -1798,6 +1840,20 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: colors.burgundy, minHeight: 52, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 8, ...shadow },
   primaryText: { color: colors.cream, fontWeight: '900', fontSize: 16 },
   link: { color: colors.burgundy, fontWeight: '900', textAlign: 'center', marginTop: 16 },
+  recoveryButton: {
+    marginTop: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.gold,
+    backgroundColor: colors.white,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  recoveryButtonText: { color: colors.burgundy, fontWeight: '900', textAlign: 'center' },
   secondaryLink: { color: colors.muted, fontWeight: '700', textAlign: 'center', marginTop: 12 },
   terms: { color: colors.muted, textAlign: 'center', marginTop: 28, fontSize: 12 },
   termsScreen: { backgroundColor: colors.linen },
