@@ -34,6 +34,7 @@ Este documento resume como funciona la aplicacion, que estados maneja y que tabl
    - El envio se guarda en `envios`.
    - La factura se guarda en `facturas_compra`.
    - El pago final queda asociado al `medio_pago` elegido.
+   - Si la subasta esta en USD, la factura solo puede pagarse en USD con transferencia/cuenta o tarjeta internacional.
 
 ## Estados principales
 
@@ -169,3 +170,8 @@ Los scripts de `database/empresa` reemplazan un panel administrativo. Para expli
 - La empresa opera validaciones, inspecciones y programacion desde Workbench.
 - Cada script modifica la BD y la app refleja esos cambios.
 
+## Moneda de subastas
+
+La moneda de una subasta no depende de la categoria. Se lee desde `subastas_config.moneda`.
+
+Si una subasta no tiene configuracion, el backend la toma como `ARS` por defecto. Para marcar una subasta como dolarizada se actualiza solo esa fila a `USD`.

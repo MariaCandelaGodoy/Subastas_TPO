@@ -157,7 +157,7 @@ function mapAuction(raw: any): AuctionSummary {
     hora: raw.hora,
     estado: raw.estado === 'abierta' ? 'EN_VIVO' : raw.estado === 'carrada' ? 'FINALIZADA' : 'PROGRAMADA',
     categoria,
-    moneda: raw.moneda,
+    moneda: raw.moneda ?? 'ARS',
     ubicacion: raw.ubicacion ?? '',
     espectadores: Number(raw.espectadores ?? 0),
     precioDesde: Number(raw.precio_desde ?? raw.precioDesde ?? 0),
@@ -254,6 +254,7 @@ export const api = {
       id: item.identificador,
       tipo: String(item.tipo).toUpperCase(),
       etiqueta: item.entidad,
+      moneda: item.moneda,
       internacional: item.moneda === 'USD',
       ultimosDigitos: String(item.referencia ?? '').slice(-4),
       garantiaDisponible: item.monto_reservado,
@@ -273,7 +274,7 @@ export const api = {
         monto_reservado: payload.garantiaDisponible,
       }),
     });
-    return { id: created.medio_pago_id, ...payload, estado: 'PENDIENTE' };
+    return { id: created.medio_pago_id, ...payload, moneda: payload.internacional ? 'USD' : 'ARS', estado: 'PENDIENTE' };
   },
   selectAuctionPayment: async (payload: Record<string, unknown>) =>
     request(`/auctions/${payload.auctionId}/join`, {

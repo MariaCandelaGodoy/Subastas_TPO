@@ -851,17 +851,31 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
   const [items, setItems] = useState<any[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
-  useEffect(() => { api.payments(session.userId).then((data: any) => setItems(data)); }, [session.userId]);
+  const [auctionCurrency, setAuctionCurrency] = useState('ARS');
+  useEffect(() => {
+    Promise.all([api.payments(session.userId), api.auction(auctionId, session.userId)]).then(([paymentRows, detail]: any[]) => {
+      setItems(paymentRows);
+      setAuctionCurrency(String(detail.auction.moneda ?? 'ARS').toUpperCase());
+    });
+  }, [auctionId, session.userId]);
+  const isCompatible = (item: any) => String(item.moneda ?? (item.internacional ? 'USD' : 'ARS')).toUpperCase() === auctionCurrency;
   const verifiedItems = items.filter((item) => item.estado === 'VERIFICADO');
+  const compatibleVerifiedItems = verifiedItems.filter(isCompatible);
   const selectPayment = (item: any) => {
     if (item.estado !== 'VERIFICADO') {
       Alert.alert('Pendiente de verificacion', 'Este medio todavia no fue verificado. No se puede usar como garantia para entrar a la subasta.');
       return;
     }
+    if (!isCompatible(item)) {
+      Alert.alert('Medio no compatible', `Esta subasta opera en ${auctionCurrency}. Selecciona un medio de pago en esa moneda.`);
+      return;
+    }
     setSelected(item.id);
   };
   const accept = async () => {
-    if (!selected) return Alert.alert('Método requerido', 'Selecciona un medio verificado para dejar constancia de capacidad de pago.');
+    const method = items.find((item) => item.id === selected);
+    if (!method) return Alert.alert('Método requerido', 'Selecciona un medio verificado para dejar constancia de capacidad de pago.');
+    if (!isCompatible(method)) return Alert.alert('Medio no compatible', `Esta subasta opera en ${auctionCurrency}. Selecciona un medio de pago en esa moneda.`);
     try {
       setLoading(true);
       await api.selectAuctionPayment({ userId: session.userId, auctionId, paymentMethodId: selected });
@@ -877,27 +891,31 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
   return (
     <Screen style={styles.configScreen}>
       <ConfigHeader title="Métodos de pago" onBack={onBack} />
+      <Text style={styles.description}>Esta subasta opera en {auctionCurrency}. Solo podés usar medios verificados en esa moneda.</Text>
       <Text style={styles.sectionTitle}>Tarjetas</Text>
-      {items.filter((i) => String(i.tipo).includes('TARJETA')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => selectPayment(item)} />)}
+      {items.filter((i) => String(i.tipo).includes('TARJETA')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} disabled={!isCompatible(item)} onPress={() => selectPayment(item)} />)}
       <Text style={styles.sectionTitle}>Cheques</Text>
-      {items.filter((i) => String(i.tipo).includes('CHEQUE')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => selectPayment(item)} />)}
+      {items.filter((i) => String(i.tipo).includes('CHEQUE')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} disabled={!isCompatible(item)} onPress={() => selectPayment(item)} />)}
       {items.length === 0 ? <Text style={styles.emptyText}>No tenes medios cargados. Agrega una tarjeta o cheque desde configuracion.</Text> : null}
       {items.length > 0 && verifiedItems.length === 0 ? <Text style={styles.emptyText}>Tus medios estan pendientes de verificacion. Necesitas uno verificado para entrar.</Text> : null}
+      {verifiedItems.length > 0 && compatibleVerifiedItems.length === 0 ? <Text style={styles.emptyText}>No tenes medios verificados en {auctionCurrency} para esta subasta.</Text> : null}
       <PrimaryButton label={loading ? 'Ingresando...' : 'Aceptar'} onPress={accept} disabled={!selected || loading} />
     </Screen>
   );
 }
 
-function SelectablePayment({ item, selected, onPress }: { item: any; selected: boolean; onPress: () => void }) {
+function SelectablePayment({ item, selected, disabled, onPress }: { item: any; selected: boolean; disabled?: boolean; onPress: () => void }) {
   const verified = item.estado === 'VERIFICADO';
+  const blocked = disabled || !verified;
   return (
-    <Pressable onPress={onPress} style={[styles.paymentSelectCard, !verified && styles.paymentSelectDisabled]}>
+    <Pressable onPress={onPress} style={[styles.paymentSelectCard, blocked && styles.paymentSelectDisabled]}>
       <View style={{ flex: 1 }}>
         <Text style={styles.paymentBrand}>{item.etiqueta}</Text>
         <Text style={styles.description}>.... .... .... {item.ultimosDigitos}</Text>
-        <Text style={[styles.verified, !verified && styles.pendingText]}>{item.estado} {item.internacional ? 'INTERNACIONAL' : 'NACIONAL'}</Text>
+        <Text style={[styles.verified, !verified && styles.pendingText]}>{item.estado} {item.moneda ?? (item.internacional ? 'USD' : 'ARS')} {item.internacional ? 'INTERNACIONAL' : 'NACIONAL'}</Text>
+        {disabled ? <Text style={styles.pendingText}>No compatible con esta subasta</Text> : null}
       </View>
-      <View style={[styles.checkBox, selected && styles.checkBoxSelected, !verified && styles.checkBoxDisabled]} />
+      <View style={[styles.checkBox, selected && styles.checkBoxSelected, blocked && styles.checkBoxDisabled]} />
     </Pressable>
   );
 }
@@ -1117,19 +1135,35 @@ function PurchaseInvoiceScreen({ session, invoice, onBack, onDone }: { session: 
   useEffect(() => {
     api.payments(session.userId).then((data: any) => {
       setPayments(data);
-      setSelected(data.find((item: any) => item.estado === 'VERIFICADO')?.id ?? null);
+      const invoiceCurrency = String(invoice?.moneda ?? 'ARS').toUpperCase();
+      setSelected(data.find((item: any) => {
+        const itemCurrency = String(item.moneda ?? (item.internacional ? 'USD' : 'ARS')).toUpperCase();
+        const itemType = String(item.tipo ?? '').toUpperCase();
+        const compatible = itemCurrency === invoiceCurrency && (invoiceCurrency !== 'USD' || itemType.includes('CUENTA') || itemType.includes('TARJETA'));
+        return item.estado === 'VERIFICADO' && compatible;
+      })?.id ?? null);
     });
-  }, [session.userId]);
+  }, [session.userId, invoice?.moneda]);
   const invoiceId = Number(invoice?.factura_id ?? invoice?.id ?? 0);
   const subtotal = Number(invoice?.factura_subtotal ?? invoice?.subtotal ?? invoice?.importe ?? 0);
   const commission = Number(invoice?.factura_comision ?? invoice?.comision ?? 0);
   const shipping = Number(invoice?.factura_envio ?? invoice?.costo_envio ?? 0);
   const total = Number(invoice?.factura_total ?? invoice?.total ?? subtotal + commission + shipping);
+  const currency = String(invoice?.moneda ?? 'ARS').toUpperCase();
+  const isPaymentCompatible = (item: any) => {
+    const itemCurrency = String(item.moneda ?? (item.internacional ? 'USD' : 'ARS')).toUpperCase();
+    const itemType = String(item.tipo ?? '').toUpperCase();
+    if (itemCurrency !== currency) return false;
+    if (currency === 'USD') return itemType.includes('CUENTA') || itemType.includes('TARJETA');
+    return true;
+  };
+  const compatiblePayments = payments.filter(isPaymentCompatible);
   const pay = async () => {
     if (!invoiceId) return Alert.alert('Factura no disponible', 'No pudimos encontrar la factura de esta compra.');
     const method = payments.find((item) => item.id === selected);
     if (!method) return Alert.alert('Medio de pago requerido', 'Seleccioná un medio de pago.');
     if (method.estado !== 'VERIFICADO') return Alert.alert('Medio pendiente', 'Solo podés pagar con medios verificados.');
+    if (!isPaymentCompatible(method)) return Alert.alert('Medio no compatible', currency === 'USD' ? 'Las subastas en dólares solo pueden pagarse con transferencia o tarjeta internacional en USD.' : `Seleccioná un medio de pago en ${currency}.`);
     setPaying(true);
     try {
       await api.payInvoice(invoiceId, { userId: session.userId, paymentMethodId: selected });
@@ -1149,27 +1183,29 @@ function PurchaseInvoiceScreen({ session, invoice, onBack, onDone }: { session: 
         <Text style={styles.invoiceProduct}>{invoice?.producto ?? 'Compra ganada'}</Text>
         {invoice?.descripcion ? <Text style={styles.description}>{invoice.descripcion}</Text> : null}
         {invoice?.direccion ? <Text style={styles.settingsDetail}>Envío: {invoice.direccion}</Text> : null}
-        <InvoiceLine label="Importe adjudicado" value={subtotal} />
-        <InvoiceLine label="Comisión" value={commission} />
-        <InvoiceLine label="Envío" value={shipping} />
+        <InvoiceLine label="Importe adjudicado" value={subtotal} currency={currency} />
+        <InvoiceLine label="Comisión" value={commission} currency={currency} />
+        <InvoiceLine label="Envío" value={shipping} currency={currency} />
         <View style={styles.invoiceDivider} />
-        <InvoiceLine label="Total" value={total} strong />
+        <InvoiceLine label="Total" value={total} currency={currency} strong />
       </View>
       <Text style={styles.sectionTitle}>Método de pago</Text>
-      {payments.map((item) => (
+      {currency === 'USD' ? <Text style={styles.description}>Esta factura está en USD. Solo se admite transferencia o tarjeta internacional en USD.</Text> : null}
+      {compatiblePayments.map((item) => (
         <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => setSelected(item.id)} />
       ))}
       {payments.length === 0 ? <Text style={styles.emptyText}>No tenés métodos de pago cargados.</Text> : null}
+      {payments.length > 0 && compatiblePayments.length === 0 ? <Text style={styles.emptyText}>No tenés métodos compatibles para pagar esta factura.</Text> : null}
       <PrimaryButton label={paying ? 'Pagando...' : 'Pagar factura'} onPress={pay} disabled={paying} />
     </Screen>
   );
 }
 
-function InvoiceLine({ label, value, strong }: { label: string; value: number; strong?: boolean }) {
+function InvoiceLine({ label, value, currency, strong }: { label: string; value: number; currency: string; strong?: boolean }) {
   return (
     <View style={styles.invoiceLine}>
       <Text style={[styles.invoiceLineLabel, strong && styles.invoiceLineStrong]}>{label}</Text>
-      <Text style={[styles.invoiceLineValue, strong && styles.invoiceLineStrong]}>${value.toLocaleString()}</Text>
+      <Text style={[styles.invoiceLineValue, strong && styles.invoiceLineStrong]}>${value.toLocaleString()} {currency}</Text>
     </View>
   );
 }

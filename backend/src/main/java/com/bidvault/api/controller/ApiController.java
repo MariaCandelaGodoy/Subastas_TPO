@@ -109,15 +109,15 @@ public class ApiController {
     require(request.direccion(), "El domicilio es obligatorio");
     require(request.dniFrenteBase64(), "La foto del frente del DNI es obligatoria");
     require(request.dniDorsoBase64(), "La foto del dorso del DNI es obligatoria");
-    validateName(request.nombre(), "El nombre no puede contener números ni caracteres inválidos");
-    validateName(request.apellido(), "El apellido no puede contener números ni caracteres inválidos");
+    validateName(request.nombre(), "El nombre no puede contener nÃƒÆ’Ã‚Âºmeros ni caracteres invÃƒÆ’Ã‚Â¡lidos");
+    validateName(request.apellido(), "El apellido no puede contener nÃƒÆ’Ã‚Âºmeros ni caracteres invÃƒÆ’Ã‚Â¡lidos");
     validateEmail(request.email());
     if (!request.documento().trim().matches("\\d+")) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, "El DNI debe contener solo números");
+      throw new ApiException(HttpStatus.BAD_REQUEST, "El DNI debe contener solo nÃƒÆ’Ã‚Âºmeros");
     }
     String email = request.email().trim().toLowerCase();
     if (!jdbc.queryForList("SELECT identificador FROM usuarios_app WHERE email=?", email).isEmpty()) {
-      throw new ApiException(HttpStatus.CONFLICT, "Ya existe una cuenta registrada con ese correo electrónico.");
+      throw new ApiException(HttpStatus.CONFLICT, "Ya existe una cuenta registrada con ese correo electrÃƒÆ’Ã‚Â³nico.");
     }
     int numeroPais = resolveCountry(request.pais(), request.numeroPais());
 
@@ -129,7 +129,7 @@ public class ApiController {
         VALUES (?, ?, 'no', 'comun', 1)
         """, personaId, numeroPais);
     jdbc.update("""
-        INSERT INTO duenios (identificador, numeroPais, `verificaciónFinanciera`, `verificaciónJudicial`, calificacionRiesgo, verificador)
+        INSERT INTO duenios (identificador, numeroPais, `verificaciÃƒÆ’Ã‚Â³nFinanciera`, `verificaciÃƒÆ’Ã‚Â³nJudicial`, calificacionRiesgo, verificador)
         VALUES (?, ?, 'no', 'no', 6, 1)
         """, personaId, numeroPais);
     String temporaryPassword = temporaryPassword();
@@ -139,7 +139,7 @@ public class ApiController {
         """, personaId, email, encoder.encode(temporaryPassword));
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
-        VALUES (?, 'Registrado', 'Su registro fue recibido. Le enviaremos un correo cuando la validación se complete.', 'importante')
+        VALUES (?, 'Registrado', 'Su registro fue recibido. Le enviaremos un correo cuando la validaciÃƒÆ’Ã‚Â³n se complete.', 'importante')
         """, personaId);
     jdbc.update("""
         INSERT INTO documentos_verificacion (persona, tipo_documento, frente, dorso, estado, observacion)
@@ -166,7 +166,7 @@ public class ApiController {
                  ELSE 'programada'
                END estado,
                MIN(i.precioBase) precio_desde, sp.imagen imagen_portada,
-               CASE WHEN s.categoria IN ('oro','platino') THEN 'USD' ELSE 'ARS' END moneda,
+               COALESCE(sc.moneda, 'ARS') moneda,
                COUNT(i.identificador) piezas,
                EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta = s.identificador AND f.cliente = COALESCE(?, -1)) favorito
         FROM subastas s
@@ -174,6 +174,7 @@ public class ApiController {
         JOIN itemsCatalogo i ON i.catalogo = c.identificador
         LEFT JOIN subastas_portadas sp ON sp.subasta = s.identificador
         LEFT JOIN subastas_estados_app se ON se.subasta = s.identificador
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
         WHERE (? IS NULL OR c.descripcion LIKE CONCAT('%', ?, '%'))
         GROUP BY s.identificador, c.descripcion, s.fecha, s.hora,
                  CASE
@@ -181,7 +182,7 @@ public class ApiController {
                    WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
                    ELSE 'programada'
                  END,
-                 s.categoria, s.ubicacion, sp.imagen
+                 s.categoria, s.ubicacion, sp.imagen, sc.moneda
         ORDER BY s.fecha, s.hora
         """;
     return jdbc.queryForList(sql, clienteId, q, q);
@@ -198,12 +199,14 @@ public class ApiController {
                END estado,
                s.categoria, s.ubicacion, s.capacidadAsistentes, s.tieneDeposito, s.seguridadPropia,
                sp.imagen imagen_portada,
+               COALESCE(sc.moneda, 'ARS') moneda,
                p.nombre subastador, EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta=s.identificador AND f.cliente=COALESCE(?, -1)) favorito
         FROM subastas s
         JOIN catalogos c ON c.subasta = s.identificador
         LEFT JOIN subastas_portadas sp ON sp.subasta = s.identificador
         LEFT JOIN subastas_estados_app se ON se.subasta = s.identificador
         LEFT JOIN personas p ON p.identificador = s.subastador
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
         WHERE s.identificador = ?
         """, clienteId, id);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "Subasta no encontrada");
@@ -266,13 +269,19 @@ public class ApiController {
         LIMIT 1
         """, request.clienteId());
     if (!activeSessions.isEmpty() && ((Number) activeSessions.get(0).get("subasta")).intValue() != id) {
-      throw new ApiException(HttpStatus.CONFLICT, "Ya estás conectado a otra subasta. Salí de esa sala antes de ingresar a una nueva.");
+      throw new ApiException(HttpStatus.CONFLICT, "Ya estÃƒÆ’Ã‚Â¡s conectado a otra subasta. SalÃƒÆ’Ã‚Â­ de esa sala antes de ingresar a una nueva.");
     }
     var payment = one("""
-        SELECT identificador, verificado
+        SELECT m.identificador, m.verificado, m.moneda,
+               COALESCE(sc.moneda, 'ARS') subasta_moneda
         FROM medios_pago
-        WHERE identificador=? AND cliente=? AND activo='si' AND verificado='si'
-        """, "El medio de pago debe estar verificado para ingresar a la subasta", request.medioPagoId(), request.clienteId());
+        m JOIN subastas s ON s.identificador=?
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
+        WHERE m.identificador=? AND m.cliente=? AND m.activo='si' AND m.verificado='si'
+        """, "El medio de pago debe estar verificado para ingresar a la subasta", id, request.medioPagoId(), request.clienteId());
+    if (!Objects.equals(payment.get("moneda"), payment.get("subasta_moneda"))) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "El medio de pago debe estar en " + payment.get("subasta_moneda") + " para ingresar a esta subasta.");
+    }
     ensureAuctionGuaranteeTable();
     jdbc.update("""
         INSERT INTO garantias_subasta (cliente, subasta, medio_pago, estado_verificacion)
@@ -308,7 +317,7 @@ public class ApiController {
         WHERE i.identificador = ?
         GROUP BY i.identificador, i.precioBase, i.comision, c.subasta, s.categoria
         FOR UPDATE
-        """, "Ítem no encontrado", request.itemId());
+        """, "ÃƒÆ’Ã‚Âtem no encontrado", request.itemId());
     int subastaId = ((Number) data.get("subasta")).intValue();
     ensureCanParticipate(request.clienteId(), subastaId, false);
     ensureAuctionGuarantee(request.clienteId(), subastaId);
@@ -318,9 +327,9 @@ public class ApiController {
     String category = data.get("subasta_categoria").toString();
     BigDecimal min = current.add(base.multiply(new BigDecimal("0.01"))).setScale(2, RoundingMode.HALF_UP);
     BigDecimal max = current.add(base.multiply(new BigDecimal("0.20"))).setScale(2, RoundingMode.HALF_UP);
-    if (amount.compareTo(min) < 0) throw new ApiException(HttpStatus.BAD_REQUEST, "La puja mínima es " + min);
+    if (amount.compareTo(min) < 0) throw new ApiException(HttpStatus.BAD_REQUEST, "La puja mÃƒÆ’Ã‚Â­nima es " + min);
     if (!category.equals("oro") && !category.equals("platino") && amount.compareTo(max) > 0) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, "La puja máxima para esta categoría es " + max);
+      throw new ApiException(HttpStatus.BAD_REQUEST, "La puja mÃƒÆ’Ã‚Â¡xima para esta categorÃƒÆ’Ã‚Â­a es " + max);
     }
     int asistenteId = ensureAssistant(request.clienteId(), subastaId);
     jdbc.update("UPDATE pujos SET ganador='no' WHERE item=?", request.itemId());
@@ -354,7 +363,7 @@ public class ApiController {
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         VALUES (?, 'Ganaste la subasta', ?, 'importante')
-        """, w.get("cliente"), "Importe: " + importe + ". Comisión: " + comision + ". Coordiná envío o retiro.");
+        """, w.get("cliente"), "Importe: " + importe + ". ComisiÃƒÆ’Ã‚Â³n: " + comision + ". CoordinÃƒÆ’Ã‚Â¡ envÃƒÆ’Ã‚Â­o o retiro.");
     return Map.of("registro_id", registro, "importe", importe, "comision", comision);
   }
 
@@ -400,7 +409,7 @@ public class ApiController {
     }
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
-        VALUES (?, 'Producto enviado a revisión', 'Recibimos tu solicitud y la empresa revisará el bien.', 'importante')
+        VALUES (?, 'Producto enviado a revisiÃƒÆ’Ã‚Â³n', 'Recibimos tu solicitud y la empresa revisarÃƒÆ’Ã‚Â¡ el bien.', 'importante')
         """, request.duenioId());
     return Map.of("solicitud_id", id, "estado", "pendiente");
   }
@@ -469,14 +478,14 @@ public class ApiController {
     require(request.apellido(), "El apellido es obligatorio");
     require(request.email(), "El email es obligatorio");
     require(request.direccion(), "El domicilio es obligatorio");
-    require(request.pais(), "El país es obligatorio");
-    validateName(request.nombre(), "El nombre no puede contener números ni caracteres inválidos");
-    validateName(request.apellido(), "El apellido no puede contener números ni caracteres inválidos");
+    require(request.pais(), "El paÃƒÆ’Ã‚Â­s es obligatorio");
+    validateName(request.nombre(), "El nombre no puede contener nÃƒÆ’Ã‚Âºmeros ni caracteres invÃƒÆ’Ã‚Â¡lidos");
+    validateName(request.apellido(), "El apellido no puede contener nÃƒÆ’Ã‚Âºmeros ni caracteres invÃƒÆ’Ã‚Â¡lidos");
     validateEmail(request.email());
     int numeroPais = resolveCountry(request.pais(), null);
     String email = request.email().trim().toLowerCase();
     if (!jdbc.queryForList("SELECT identificador FROM usuarios_app WHERE email=? AND persona<>?", email, clienteId).isEmpty()) {
-      throw new ApiException(HttpStatus.CONFLICT, "Ya existe una cuenta registrada con ese correo electrónico.");
+      throw new ApiException(HttpStatus.CONFLICT, "Ya existe una cuenta registrada con ese correo electrÃƒÆ’Ã‚Â³nico.");
     }
 
     String fullName = request.nombre().trim() + " " + request.apellido().trim();
@@ -510,7 +519,7 @@ public class ApiController {
   @PutMapping("/profile/{clienteId}/password")
   @Transactional
   Map<String, Object> updatePassword(@PathVariable int clienteId, @RequestBody UpdatePasswordRequest request) {
-    require(request.password(), "La nueva contraseña es obligatoria");
+    require(request.password(), "La nueva contraseÃƒÆ’Ã‚Â±a es obligatoria");
     jdbc.update("UPDATE usuarios_app SET password_hash=?, password_temporal='no' WHERE persona=?",
         encoder.encode(request.password()), clienteId);
     return one("""
@@ -546,11 +555,14 @@ public class ApiController {
     return jdbc.queryForList("""
         SELECT e.identificador id, e.estado, e.costo, e.codigo_seguimiento tracking,
                e.direccion, r.identificador registro_id, r.importe, r.comision,
+               COALESCE(sc.moneda, 'ARS') moneda,
                p.identificador producto_id, p.descripcionCatalogo producto, p.descripcionCompleta descripcion,
                fc.identificador factura_id, fc.numero factura_numero, fc.total factura_total, fc.estado factura_estado,
                (SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto)) FROM fotos f WHERE f.producto=p.identificador LIMIT 1) imagen
         FROM envios e
         JOIN registroDeSubasta r ON r.identificador = e.registro
+        JOIN subastas s ON s.identificador = r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
         JOIN productos p ON p.identificador = r.producto
         LEFT JOIN facturas_compra fc ON fc.registro = r.identificador
         WHERE r.cliente=?
@@ -564,11 +576,13 @@ public class ApiController {
         SELECT r.identificador registro_id, r.importe, r.comision,
                (r.importe + r.comision) total,
                s.identificador subasta_id, ca.descripcion subasta,
+               COALESCE(sc.moneda, 'ARS') moneda,
                p.identificador producto_id, p.descripcionCatalogo producto, p.descripcionCompleta descripcion,
                (SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto)) FROM fotos f WHERE f.producto=p.identificador LIMIT 1) imagen
         FROM registroDeSubasta r
         JOIN productos p ON p.identificador = r.producto
         JOIN subastas s ON s.identificador = r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
         JOIN catalogos ca ON ca.subasta = s.identificador
         WHERE r.cliente=?
           AND NOT EXISTS (SELECT 1 FROM envios e WHERE e.registro=r.identificador)
@@ -581,10 +595,13 @@ public class ApiController {
     return jdbc.queryForList("""
         SELECT fc.identificador id, fc.numero, fc.subtotal, fc.comision, fc.costo_envio, fc.total, fc.estado,
                fc.creado_en, fc.pagado_en, fc.registro registro_id, fc.envio envio_id, fc.medio_pago medio_pago_id,
+               COALESCE(sc.moneda, 'ARS') moneda,
                p.descripcionCatalogo producto, p.descripcionCompleta descripcion, e.direccion,
                (SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto)) FROM fotos f WHERE f.producto=p.identificador LIMIT 1) imagen
         FROM facturas_compra fc
         JOIN registroDeSubasta r ON r.identificador = fc.registro
+        JOIN subastas s ON s.identificador = r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
         JOIN productos p ON p.identificador = r.producto
         LEFT JOIN envios e ON e.identificador = fc.envio
         WHERE r.cliente=?
@@ -600,7 +617,7 @@ public class ApiController {
         SELECT direccion, ciudad, pais
         FROM direcciones_entrega
         WHERE identificador=? AND cliente=?
-        """, "Dirección no encontrada", request.addressId(), request.userId());
+        """, "DirecciÃƒÆ’Ã‚Â³n no encontrada", request.addressId(), request.userId());
     var pending = jdbc.queryForList("""
         SELECT r.identificador
         FROM registroDeSubasta r
@@ -610,7 +627,7 @@ public class ApiController {
         LIMIT 1
         """, request.userId());
     if (pending.isEmpty()) {
-      throw new ApiException(HttpStatus.NOT_FOUND, "No hay compras pendientes de envío");
+      throw new ApiException(HttpStatus.NOT_FOUND, "No hay compras pendientes de envÃƒÆ’Ã‚Â­o");
     }
     String fullAddress = address.get("direccion") + ", " + address.get("ciudad") + ", " + address.get("pais");
     String tracking = "BV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
@@ -623,6 +640,7 @@ public class ApiController {
     return one("""
         SELECT e.identificador id, e.estado, e.costo, e.codigo_seguimiento tracking,
                e.direccion, r.identificador registro_id, r.importe, r.comision,
+               COALESCE(sc.moneda, 'ARS') moneda,
                p.descripcionCatalogo producto, p.descripcionCompleta descripcion,
                fc.identificador factura_id, fc.numero factura_numero, fc.subtotal factura_subtotal,
                fc.comision factura_comision, fc.costo_envio factura_envio, fc.total factura_total,
@@ -630,31 +648,45 @@ public class ApiController {
                (SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto)) FROM fotos f WHERE f.producto=p.identificador LIMIT 1) imagen
         FROM envios e
         JOIN registroDeSubasta r ON r.identificador=e.registro
+        JOIN subastas s ON s.identificador=r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
         JOIN productos p ON p.identificador=r.producto
         LEFT JOIN facturas_compra fc ON fc.registro=r.identificador
         WHERE e.identificador=?
-        """, "Envío no encontrado", id);
+        """, "Envio no encontrado", id);
   }
 
   @PutMapping("/invoices/{invoiceId}/pay")
   @Transactional
   Map<String, Object> payInvoice(@PathVariable int invoiceId, @RequestBody PayInvoiceRequest request) {
     var invoice = one("""
-        SELECT fc.identificador, r.cliente
+        SELECT fc.identificador, r.cliente,
+               COALESCE(sc.moneda, 'ARS') moneda
         FROM facturas_compra fc
         JOIN registroDeSubasta r ON r.identificador=fc.registro
+        JOIN subastas s ON s.identificador=r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
         WHERE fc.identificador=?
         """, "Factura no encontrada", invoiceId);
     if (((Number) invoice.get("cliente")).intValue() != request.userId()) {
       throw new ApiException(HttpStatus.FORBIDDEN, "La factura no pertenece al usuario");
     }
     var payment = one("""
-        SELECT identificador, verificado
+        SELECT identificador, verificado, tipo, moneda
         FROM medios_pago
         WHERE identificador=? AND cliente=? AND activo='si'
         """, "Medio de pago no encontrado", request.paymentMethodId(), request.userId());
     if (!"si".equals(payment.get("verificado"))) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, "El medio de pago está pendiente de verificación");
+      throw new ApiException(HttpStatus.BAD_REQUEST, "El medio de pago esta pendiente de verificacion");
+    }
+    String invoiceCurrency = Objects.toString(invoice.get("moneda"), "");
+    String paymentCurrency = Objects.toString(payment.get("moneda"), "");
+    String paymentType = Objects.toString(payment.get("tipo"), "").toLowerCase();
+    if (!invoiceCurrency.equals(paymentCurrency)) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "La factura esta en " + invoiceCurrency + ". Selecciona un medio de pago en esa moneda.");
+    }
+    if ("USD".equals(invoiceCurrency) && !("cuenta".equals(paymentType) || "tarjeta".equals(paymentType))) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "Las subastas en dolares solo pueden pagarse con transferencia o tarjeta internacional.");
     }
     jdbc.update("""
         UPDATE facturas_compra
@@ -664,21 +696,25 @@ public class ApiController {
     return one("""
         SELECT fc.identificador id, fc.numero, fc.subtotal, fc.comision, fc.costo_envio, fc.total, fc.estado,
                fc.creado_en, fc.pagado_en, fc.registro registro_id, fc.envio envio_id, fc.medio_pago medio_pago_id,
+               COALESCE(sc.moneda, 'ARS') moneda,
                p.descripcionCatalogo producto, p.descripcionCompleta descripcion, e.direccion
         FROM facturas_compra fc
         JOIN registroDeSubasta r ON r.identificador=fc.registro
+        JOIN subastas s ON s.identificador=r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
         JOIN productos p ON p.identificador=r.producto
         LEFT JOIN envios e ON e.identificador=fc.envio
         WHERE fc.identificador=?
         """, "Factura no encontrada", invoiceId);
   }
 
+
   @PostMapping("/shipping/addresses")
   @Transactional
   Map<String, Object> addAddress(@RequestBody AddressRequest request) {
     ensureAddressTable();
-    require(request.titulo(), "El título de la dirección es obligatorio");
-    require(request.direccion(), "La dirección es obligatoria");
+    require(request.titulo(), "El titulo de la direccion es obligatorio");
+    require(request.direccion(), "La direccion es obligatoria");
     if ("si".equals(request.predeterminada())) {
       jdbc.update("UPDATE direcciones_entrega SET predeterminada='no' WHERE cliente=?", request.userId());
     }
@@ -689,15 +725,15 @@ public class ApiController {
         blankDefault(request.ciudad(), "Buenos Aires"), blankDefault(request.pais(), "Argentina"),
         blankDefault(request.predeterminada(), "si"));
     return one("SELECT identificador id, titulo, direccion, ciudad, pais, predeterminada FROM direcciones_entrega WHERE identificador=?",
-        "Dirección no encontrada", id);
+        "DirecciÃƒÆ’Ã‚Â³n no encontrada", id);
   }
 
   @PutMapping("/shipping/addresses/{id}")
   @Transactional
   Map<String, Object> updateAddress(@PathVariable int id, @RequestBody AddressRequest request) {
     ensureAddressTable();
-    require(request.titulo(), "El título de la dirección es obligatorio");
-    require(request.direccion(), "La dirección es obligatoria");
+    require(request.titulo(), "El titulo de la direccion es obligatorio");
+    require(request.direccion(), "La direccion es obligatoria");
     if ("si".equals(request.predeterminada())) {
       jdbc.update("UPDATE direcciones_entrega SET predeterminada='no' WHERE cliente=?", request.userId());
     }
@@ -708,7 +744,7 @@ public class ApiController {
         """, request.titulo(), request.direccion(), blankDefault(request.ciudad(), "Buenos Aires"),
         blankDefault(request.pais(), "Argentina"), blankDefault(request.predeterminada(), "no"), id, request.userId());
     return one("SELECT identificador id, titulo, direccion, ciudad, pais, predeterminada FROM direcciones_entrega WHERE identificador=?",
-        "Dirección no encontrada", id);
+        "DirecciÃƒÆ’Ã‚Â³n no encontrada", id);
   }
 
   @GetMapping("/my-pieces/{duenioId}")
@@ -866,7 +902,7 @@ public class ApiController {
 
   private void validateEmail(String value) {
     if (!EMAIL_PATTERN.matcher(value.trim()).matches()) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, "El correo electrónico no tiene un formato válido");
+      throw new ApiException(HttpStatus.BAD_REQUEST, "El correo electrÃƒÆ’Ã‚Â³nico no tiene un formato vÃƒÆ’Ã‚Â¡lido");
     }
   }
 
@@ -875,13 +911,13 @@ public class ApiController {
       var byNumber = jdbc.queryForList("SELECT numero FROM paises WHERE numero=?", numeroPais);
       if (!byNumber.isEmpty()) return numeroPais;
     }
-    require(pais, "El país es obligatorio");
+    require(pais, "El paÃƒÆ’Ã‚Â­s es obligatorio");
     var rows = jdbc.queryForList("""
         SELECT numero
         FROM paises
         WHERE LOWER(nombre)=LOWER(?) OR LOWER(nombreCorto)=LOWER(?)
         """, pais.trim(), pais.trim());
-    if (rows.isEmpty()) throw new ApiException(HttpStatus.BAD_REQUEST, "El país ingresado no es válido");
+    if (rows.isEmpty()) throw new ApiException(HttpStatus.BAD_REQUEST, "El paÃƒÆ’Ã‚Â­s ingresado no es vÃƒÆ’Ã‚Â¡lido");
     return ((Number) rows.get(0).get("numero")).intValue();
   }
 

@@ -170,6 +170,14 @@ CREATE TABLE subastas_estados_app (
   CONSTRAINT fk_subastas_estados_app_subastas FOREIGN KEY (subasta) REFERENCES subastas(identificador)
 );
 
+CREATE TABLE subastas_config (
+  subasta INT NOT NULL,
+  moneda VARCHAR(3) NOT NULL DEFAULT 'ARS',
+  CONSTRAINT pk_subastas_config PRIMARY KEY (subasta),
+  CONSTRAINT chk_subastas_config_moneda CHECK (moneda IN ('ARS','USD')),
+  CONSTRAINT fk_subastas_config_subastas FOREIGN KEY (subasta) REFERENCES subastas(identificador)
+);
+
 CREATE TABLE productos (
   identificador INT NOT NULL AUTO_INCREMENT,
   fecha DATE,
