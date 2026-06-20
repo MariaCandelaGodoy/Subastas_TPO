@@ -1,0 +1,2 @@
+com\bidvault\api\service\AuctionRealtimeHub.class
+com\bidvault\api\config\WebSocketConfig.class

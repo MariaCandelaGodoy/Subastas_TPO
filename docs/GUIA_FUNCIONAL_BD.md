@@ -28,6 +28,8 @@ Este documento resume como funciona la aplicacion, que estados maneja y que tabl
    - El usuario carga un objeto con descripcion y al menos 6 fotos.
    - Se guarda en `solicitudes_productos` y `solicitudes_fotos`.
    - La empresa revisa con scripts de `database/empresa`.
+   - Cuando la empresa recibe el bien, asigna deposito y seguro.
+   - El dueño puede ver desde `Mis piezas` la ubicacion en deposito y la poliza asociada.
 
 6. Compra ganada, envio y factura
    - La subasta ganada queda en `registroDeSubasta`.
@@ -175,3 +177,14 @@ Los scripts de `database/empresa` reemplazan un panel administrativo. Para expli
 La moneda de una subasta no depende de la categoria. Se lee desde `subastas_config.moneda`.
 
 Si una subasta no tiene configuracion, el backend la toma como `ARS` por defecto. Para marcar una subasta como dolarizada se actualiza solo esa fila a `USD`.
+
+## Subastas en tiempo real
+
+Las salas de puja usan WebSocket nativo de Spring Boot.
+
+- El front se conecta a `/ws/auctions/{subastaId}` al entrar a la sala.
+- La puja se guarda siempre primero en MySQL, en `pujos`.
+- Despues de guardar, el backend publica el evento `NUEVA_PUJA` a todos los usuarios conectados a esa subasta.
+- Cuando el front recibe el evento, vuelve a pedir el detalle de la subasta y actualiza la ultima oferta, el minimo y el maximo permitido.
+
+Esto evita hardcodear valores en pantalla: la BD sigue siendo la verdad, y el WebSocket solo sirve para avisar cambios en vivo sin tener que refrescar manualmente.

@@ -3,6 +3,8 @@ import { Platform } from 'react-native';
 
 function resolveApiUrl() {
   if (process.env.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
+  const configuredUrl = Constants.expoConfig?.extra?.apiUrl;
+  if (typeof configuredUrl === 'string' && configuredUrl.trim()) return configuredUrl;
   if (Platform.OS === 'web') return 'http://localhost:8080/api';
 
   const hostUri = Constants.expoConfig?.hostUri ?? Constants.manifest2?.extra?.expoGo?.debuggerHost;
@@ -11,9 +13,12 @@ function resolveApiUrl() {
 }
 
 export const API_URL = resolveApiUrl();
+export const WS_URL = API_URL.replace(/^http/, 'ws').replace(/\/api$/, '');
+const tunnelHeaders = API_URL.includes('loca.lt') ? { 'bypass-tunnel-reminder': 'true' } : {};
 
 if (__DEV__) {
   console.info(`BidVault API: ${API_URL}`);
+  console.info(`BidVault WS: ${WS_URL}`);
 }
 
 function userFacingError(message?: string) {
@@ -98,21 +103,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45000);
+  const headers = new Headers(options.headers);
+  headers.set('Content-Type', 'application/json');
+  Object.entries(tunnelHeaders).forEach(([key, value]) => headers.set(key, value));
   try {
     response = await fetch(`${API_URL}${path}`, {
       ...options,
       signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.headers ?? {}),
-      },
+      headers,
     });
   } catch (error) {
     const aborted = error instanceof Error && error.name === 'AbortError';
     if (aborted) {
       throw new Error('El backend no respondió. Verificá que Spring Boot esté levantado.');
     }
-    throw new Error('No pudimos conectar con el backend. Verificá que Spring Boot esté levantado y que Expo use la IP correcta.');
+    throw new Error(`No pudimos conectar con el backend. URL usada: ${API_URL}`);
   } finally {
     clearTimeout(timeout);
   }
@@ -437,6 +442,7 @@ export const api = {
     request(`/my-pieces/${pieceId}/proposal/accept`, { method: 'PUT', body: JSON.stringify({ cliente_id: userId }) }),
   rejectPieceProposal: (userId: number, pieceId: number) =>
     request(`/my-pieces/${pieceId}/proposal/reject`, { method: 'PUT', body: JSON.stringify({ cliente_id: userId }) }),
+  pieceCustody: (userId: number, pieceId: number) => request(`/my-pieces/${pieceId}/custody?duenioId=${userId}`),
   shipments: (userId: number) => request(`/shipping/shipments?userId=${userId}`),
   pendingShippingPurchases: (userId: number) => request(`/purchases/pending-shipping?userId=${userId}`),
   invoices: (userId: number) => request(`/invoices?userId=${userId}`),

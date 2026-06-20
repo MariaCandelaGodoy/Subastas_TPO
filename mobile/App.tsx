@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { api, AuctionDetail, AuctionSummary, Country, ProductItem, UserSession } from './src/api/client';
+import { api, API_URL, AuctionDetail, AuctionSummary, Country, ProductItem, UserSession, WS_URL } from './src/api/client';
 import { AuctionCard } from './src/components/AuctionCard';
 import { BottomTabs, Header, RankBadge, TabKey } from './src/components/Chrome';
 import { Screen } from './src/components/Screen';
@@ -171,6 +171,7 @@ function LoginScreen({ onLogin, onRegister, onForgot, onGuest, onTerms }: { onLo
       <Pressable onPress={onRegister}><Text style={styles.link}>No tenes cuenta? Registrate</Text></Pressable>
       <Pressable onPress={onGuest}><Text style={styles.secondaryLink}>Iniciar sesion mas tarde</Text></Pressable>
       <Pressable onPress={onTerms}><Text style={styles.terms}>Al continuar aceptas nuestros Terminos y Condiciones</Text></Pressable>
+      {__DEV__ ? <Text style={styles.apiDebug}>API: {API_URL}</Text> : null}
     </Screen>
   );
 }
@@ -669,6 +670,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
   const [selected, setSelected] = useState<ProductItem | null>(null);
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
+  const [liveStatus, setLiveStatus] = useState('Conectando en vivo...');
 
   const load = () => api.auction(auctionId, session?.userId).then((data) => {
     const current = initialProduct ? data.products.find((item: ProductItem) => item.id === initialProduct.id) ?? data.products[0] : data.products[0];
@@ -677,6 +679,26 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     setAmount(String(current?.ofertaMinima ?? ''));
   });
   useEffect(() => { load().catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.')); }, [auctionId]);
+  useEffect(() => {
+    const socket = new WebSocket(`${WS_URL}/ws/auctions/${auctionId}`);
+    socket.onopen = () => setLiveStatus('Sala en vivo conectada');
+    socket.onerror = () => setLiveStatus('Sala en vivo sin conexión');
+    socket.onclose = () => setLiveStatus('Sala en vivo desconectada');
+    socket.onmessage = async (message) => {
+      try {
+        const event = JSON.parse(String(message.data));
+        if (event.tipo === 'NUEVA_PUJA') {
+          await load();
+          if (Number(event.clienteId) !== session?.userId) {
+            setLiveStatus(`Nueva puja: ${Number(event.importe).toLocaleString()} ${detail?.auction.moneda ?? ''}`);
+          }
+        }
+      } catch {
+        setLiveStatus('Actualización en vivo recibida');
+      }
+    };
+    return () => socket.close();
+  }, [auctionId, session?.userId]);
 
   const placeBid = async () => {
     if (!session) {
@@ -719,6 +741,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
           </View>
         </View>
       </View>
+      <Text style={styles.liveStatus}>{liveStatus}</Text>
       <View style={styles.bidCurrentLot}>
         {selectedImage ? <Image source={selectedImage} style={styles.bidLotImage} resizeMode="cover" /> : <View style={styles.bidLotFallback}><Ionicons name="image-outline" size={24} color={colors.gold} /></View>}
         <View style={styles.bidLotMain}>
@@ -1650,6 +1673,17 @@ function MyPiecesScreen({ session, onBack }: { session: UserSession; onBack: () 
       Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos rechazar la propuesta.');
     }
   };
+  const showCustody = async (piece: any) => {
+    try {
+      const custody: any = await api.pieceCustody(session.userId, piece.id);
+      Alert.alert(
+        'Depósito y seguro',
+        `Depósito: ${custody.deposito ?? 'Pendiente de asignación'}\nPóliza: ${custody.poliza_numero ?? custody.seguro ?? 'Pendiente'}\nAseguradora: ${custody.poliza_compania ?? 'Pendiente'}\nCobertura: ${custody.poliza_cobertura ?? 'Pendiente'}`
+      );
+    } catch (error) {
+      Alert.alert('Custodia no disponible', error instanceof Error ? error.message : 'No pudimos cargar el depósito del bien.');
+    }
+  };
   const normalized = query.trim().toLowerCase();
   const visiblePieces = pieces.filter((piece) => {
     const text = `${piece.titulo} ${piece.descripcion} ${piece.estado}`.toLowerCase();
@@ -1678,7 +1712,7 @@ function MyPiecesScreen({ session, onBack }: { session: UserSession; onBack: () 
           </Pressable>
         ))}
       </View>
-      {visiblePieces.map((piece) => <PieceRequestCard key={piece.id} piece={piece} onAccept={() => acceptProposal(piece)} onReject={() => rejectProposal(piece)} />)}
+      {visiblePieces.map((piece) => <PieceRequestCard key={piece.id} piece={piece} onAccept={() => acceptProposal(piece)} onReject={() => rejectProposal(piece)} onCustody={() => showCustody(piece)} />)}
       {visiblePieces.length === 0 ? <Text style={styles.emptyText}>No encontramos piezas con esa busqueda.</Text> : null}
     </Screen>
   );
@@ -1771,7 +1805,7 @@ function AddressCard({ title, subtitle, tag, selected }: { title: string; subtit
   );
 }
 
-function PieceRequestCard({ piece, onAccept, onReject }: { piece: any; onAccept?: () => void; onReject?: () => void }) {
+function PieceRequestCard({ piece, onAccept, onReject, onCustody }: { piece: any; onAccept?: () => void; onReject?: () => void; onCustody?: () => void }) {
   const status = String(piece.estado ?? '').toLowerCase();
   const motivo = String(piece.motivoRechazo ?? '').toLowerCase();
   const hasProposal = status === 'en_revision' && Boolean(piece.propuestaId) && piece.propuestaEstado === 'pendiente_usuario';
@@ -1789,11 +1823,13 @@ function PieceRequestCard({ piece, onAccept, onReject }: { piece: any; onAccept?
         <>
           <View style={styles.proposalGrid}>
             <ProposalDatum label="Fecha & hora" value={`${formatDate(piece.fechaSubasta)}\n${String(piece.horaSubasta ?? '').slice(0, 5)}hs`} />
-            <ProposalDatum label="Ubicación" value={piece.ubicacion ?? ''} />
+            <ProposalDatum label="Subasta" value={piece.ubicacion ?? ''} />
+            <ProposalDatum label="Depósito" value={piece.deposito ?? 'Pendiente'} />
             <ProposalDatum label="Precio" value={`$ ${Number(piece.precioBase ?? 0).toLocaleString()} ${piece.moneda ?? ''}`} />
             <ProposalDatum label="Comisión" value={`${Number(piece.comision ?? 0)}%`} />
           </View>
           <Text style={styles.proposalPolicy}>Póliza de seguro <Text style={styles.nextStrong}>{piece.polizaCompania ?? ''} {piece.polizaNumero ?? piece.seguro ?? ''}</Text> <Text style={styles.successText}>{piece.polizaCobertura ?? ''}</Text></Text>
+          <Pressable onPress={onCustody} style={styles.secondaryButton}><Ionicons name="shield-checkmark-outline" size={20} color={colors.burgundy} /><Text style={styles.secondaryButtonText}>Ver depósito y seguro</Text></Pressable>
           <PrimaryButton label="Aceptar Propuesta" onPress={onAccept ?? (() => undefined)} />
           <Pressable onPress={onReject} style={styles.cancelButton}><Text style={styles.cancelText}>Rechazar</Text></Pressable>
         </>
@@ -1803,7 +1839,8 @@ function PieceRequestCard({ piece, onAccept, onReject }: { piece: any; onAccept?
           {hasReturnCharge ? <Text style={styles.verified}>Cargo por devolución pendiente</Text> : null}
           {piece.motivoRechazo ? <Text style={styles.description}>Motivo: {piece.motivoRechazo}</Text> : null}
           {piece.seguro ? <Text style={styles.description}>Póliza: {piece.seguro}</Text> : null}
-          {piece.deposito ? <Text style={styles.description}>Depósito: {piece.deposito}</Text> : null}
+          {piece.deposito ? <Text style={styles.description}>Depósito del bien: {piece.deposito}</Text> : null}
+          <Pressable onPress={onCustody} style={styles.secondaryButton}><Ionicons name="shield-checkmark-outline" size={20} color={colors.burgundy} /><Text style={styles.secondaryButtonText}>Ver depósito y seguro</Text></Pressable>
         </>
       )}
     </View>
@@ -1892,6 +1929,7 @@ const styles = StyleSheet.create({
   recoveryButtonText: { color: colors.burgundy, fontWeight: '900', textAlign: 'center' },
   secondaryLink: { color: colors.muted, fontWeight: '700', textAlign: 'center', marginTop: 12 },
   terms: { color: colors.muted, textAlign: 'center', marginTop: 28, fontSize: 12 },
+  apiDebug: { color: colors.muted, textAlign: 'center', marginTop: 10, fontSize: 11 },
   termsScreen: { backgroundColor: colors.linen },
   termsHeader: { minHeight: 74, marginHorizontal: -18, marginTop: -18, paddingHorizontal: 18, backgroundColor: colors.cream, flexDirection: 'row', alignItems: 'center', gap: 22 },
   termsTitle: { color: colors.burgundy, fontSize: 27, fontWeight: '900', flex: 1 },
@@ -1998,6 +2036,7 @@ const styles = StyleSheet.create({
   productOwnerValue: { color: colors.burgundy, fontSize: 17, fontWeight: '900', textAlign: 'center' },
   bidRoomScreen: { backgroundColor: colors.cream },
   bidAuctionSummary: { backgroundColor: colors.white, borderRadius: 8, borderWidth: 1, borderColor: colors.linen, padding: 12, marginBottom: 14, gap: 12, ...shadow },
+  liveStatus: { color: colors.burgundy, fontWeight: '800', marginBottom: 10 },
   bidAuctionImage: { width: '100%', height: 135, borderRadius: 6, backgroundColor: colors.linen },
   bidAuctionImageFallback: { width: '100%', height: 135, borderRadius: 6, backgroundColor: colors.linen, alignItems: 'center', justifyContent: 'center' },
   bidSummaryTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 },

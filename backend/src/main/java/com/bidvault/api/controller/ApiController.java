@@ -12,6 +12,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import com.bidvault.api.exception.ApiException;
+import com.bidvault.api.service.AuctionRealtimeHub;
 import com.bidvault.api.service.EmailService;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -27,14 +28,16 @@ public class ApiController {
   private final JdbcTemplate jdbc;
   private final PasswordEncoder encoder;
   private final EmailService emailService;
+  private final AuctionRealtimeHub realtimeHub;
   private static final SecureRandom RANDOM = new SecureRandom();
   private static final Pattern NAME_PATTERN = Pattern.compile("^[\\p{L}]+(?:[ '\\-][\\p{L}]+)*$");
   private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$", Pattern.CASE_INSENSITIVE);
 
-  public ApiController(JdbcTemplate jdbc, PasswordEncoder encoder, EmailService emailService) {
+  public ApiController(JdbcTemplate jdbc, PasswordEncoder encoder, EmailService emailService, AuctionRealtimeHub realtimeHub) {
     this.jdbc = jdbc;
     this.encoder = encoder;
     this.emailService = emailService;
+    this.realtimeHub = realtimeHub;
   }
 
   @GetMapping("/health")
@@ -335,6 +338,15 @@ public class ApiController {
     jdbc.update("UPDATE pujos SET ganador='no' WHERE item=?", request.itemId());
     int bidId = insertAndReturnKey("INSERT INTO pujos (asistente, item, importe, ganador) VALUES (?, ?, ?, 'si')",
         asistenteId, request.itemId(), amount);
+    Map<String, Object> event = Map.of(
+        "tipo", "NUEVA_PUJA",
+        "subastaId", subastaId,
+        "itemId", request.itemId(),
+        "pujaId", bidId,
+        "clienteId", request.clienteId(),
+        "importe", amount,
+        "ganador", "si");
+    realtimeHub.publish(subastaId, event);
     return Map.of("puja_id", bidId, "item_id", request.itemId(), "importe", amount, "ganador", "si");
   }
 
@@ -766,6 +778,19 @@ public class ApiController {
         WHERE sp.duenio=?
         ORDER BY sp.creado_en DESC
         """, duenioId);
+  }
+
+  @GetMapping("/my-pieces/{solicitudId}/custody")
+  Map<String, Object> pieceCustody(@PathVariable int solicitudId, @RequestParam int duenioId) {
+    return one("""
+        SELECT sp.identificador id, sp.titulo, sp.deposito, sp.seguro,
+               spe.poliza_compania, spe.poliza_numero, spe.poliza_cobertura
+        FROM solicitudes_productos sp
+        LEFT JOIN solicitudes_propuestas_empresa spe ON spe.solicitud=sp.identificador
+        WHERE sp.identificador=? AND sp.duenio=?
+        ORDER BY spe.identificador DESC
+        LIMIT 1
+        """, "Custodia no encontrada", solicitudId, duenioId);
   }
 
   @PutMapping("/my-pieces/{solicitudId}/proposal/accept")
