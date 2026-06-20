@@ -47,6 +47,7 @@ public class ApiController {
 
   @PostMapping("/auth/login")
   Map<String, Object> login(@RequestBody LoginRequest request) {
+    refreshOverduePenalties();
     var users = jdbc.queryForList("""
         SELECT u.identificador usuario_id, u.email, u.password_hash, u.password_temporal, u.rol,
                p.identificador persona_id, p.nombre, p.direccion, pa.nombre pais,
@@ -68,6 +69,7 @@ public class ApiController {
     if (!"si".equals(user.get("admitido"))) {
       throw new ApiException(HttpStatus.FORBIDDEN, "Tu cuenta todavia esta pendiente de validacion.");
     }
+    ensureUserNotBlocked(((Number) user.get("persona_id")).intValue());
     user.remove("password_hash");
     return Map.of("token", "demo-token-" + user.get("usuario_id"), "user", user);
   }
@@ -164,12 +166,16 @@ public class ApiController {
         SELECT s.identificador id, c.descripcion titulo, s.fecha, s.hora, s.categoria,
                s.ubicacion,
                CASE
-                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE() THEN 'abierta'
+                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE()
+                   AND GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) > 0 THEN 'abierta'
                  WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
                  ELSE 'programada'
                END estado,
                MIN(i.precioBase) precio_desde, sp.imagen imagen_portada,
                COALESCE(sc.moneda, 'ARS') moneda,
+               COALESCE(sc.duracion_minutos, 90) duracion_minutos,
+               GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) tiempo_restante_segundos,
+               (SELECT COUNT(*) FROM sesiones_subasta ss WHERE ss.subasta=s.identificador AND ss.activa='si') espectadores,
                COUNT(i.identificador) piezas,
                EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta = s.identificador AND f.cliente = COALESCE(?, -1)) favorito
         FROM subastas s
@@ -181,11 +187,12 @@ public class ApiController {
         WHERE (? IS NULL OR c.descripcion LIKE CONCAT('%', ?, '%'))
         GROUP BY s.identificador, c.descripcion, s.fecha, s.hora,
                  CASE
-                   WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE() THEN 'abierta'
+                   WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE()
+                     AND GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) > 0 THEN 'abierta'
                    WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
                    ELSE 'programada'
                  END,
-                 s.categoria, s.ubicacion, sp.imagen, sc.moneda
+                 s.categoria, s.ubicacion, sp.imagen, sc.moneda, sc.duracion_minutos
         ORDER BY s.fecha, s.hora
         """;
     return jdbc.queryForList(sql, clienteId, q, q);
@@ -196,13 +203,17 @@ public class ApiController {
     var rows = jdbc.queryForList("""
         SELECT s.identificador id, c.identificador catalogo_id, c.descripcion titulo, s.fecha, s.hora,
                CASE
-                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE() THEN 'abierta'
+                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE()
+                   AND GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) > 0 THEN 'abierta'
                  WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
                  ELSE 'programada'
                END estado,
                s.categoria, s.ubicacion, s.capacidadAsistentes, s.tieneDeposito, s.seguridadPropia,
                sp.imagen imagen_portada,
                COALESCE(sc.moneda, 'ARS') moneda,
+               COALESCE(sc.duracion_minutos, 90) duracion_minutos,
+               GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) tiempo_restante_segundos,
+               (SELECT COUNT(*) FROM sesiones_subasta ss WHERE ss.subasta=s.identificador AND ss.activa='si') espectadores,
                p.nombre subastador, EXISTS(SELECT 1 FROM favoritos f WHERE f.subasta=s.identificador AND f.cliente=COALESCE(?, -1)) favorito
         FROM subastas s
         JOIN catalogos c ON c.subasta = s.identificador
@@ -262,6 +273,14 @@ public class ApiController {
   @Transactional
   Map<String, Object> joinAuction(@PathVariable int id, @RequestBody JoinAuctionRequest request) {
     ensureCanParticipate(request.clienteId(), id, false);
+    jdbc.update("""
+        UPDATE sesiones_subasta ss
+        JOIN subastas s ON s.identificador=ss.subasta
+        LEFT JOIN subastas_estados_app se ON se.subasta=s.identificador
+        SET ss.activa='no'
+        WHERE ss.cliente=? AND ss.activa='si'
+          AND (s.fecha<>CURDATE() OR COALESCE(se.estado_app, s.estado)<>'abierta')
+        """, request.clienteId());
     var activeSessions = jdbc.queryForList("""
         SELECT ss.identificador sesion_id, ss.subasta, c.descripcion titulo
         FROM sesiones_subasta ss
@@ -296,6 +315,7 @@ public class ApiController {
     int sessionId = activeSessions.isEmpty()
         ? insertAndReturnKey("INSERT INTO sesiones_subasta (cliente, subasta, activa) VALUES (?, ?, 'si')", request.clienteId(), id)
         : ((Number) activeSessions.get(0).get("sesion_id")).intValue();
+    realtimeHub.publish(id, Map.of("tipo", "ESPECTADORES", "subastaId", id, "espectadores", countActiveSpectators(id)));
     return Map.of("sesion_id", sessionId, "numero_postor", postor, "medio_pago_id", request.medioPagoId(), "garantia", true);
   }
 
@@ -303,6 +323,7 @@ public class ApiController {
   @Transactional
   Map<String, Object> leaveAuction(@PathVariable int id, @RequestBody ClientRequest request) {
     int updated = jdbc.update("UPDATE sesiones_subasta SET activa='no' WHERE cliente=? AND subasta=? AND activa='si'", request.clienteId(), id);
+    realtimeHub.publish(id, Map.of("tipo", "ESPECTADORES", "subastaId", id, "espectadores", countActiveSpectators(id)));
     return Map.of("closed", updated);
   }
 
@@ -353,6 +374,14 @@ public class ApiController {
   @PostMapping("/auctions/{id}/close-item/{itemId}")
   @Transactional
   Map<String, Object> closeItem(@PathVariable int id, @PathVariable int itemId) {
+    var item = one("""
+        SELECT i.identificador item_id, i.precioBase, i.comision, pr.duenio, pr.identificador producto
+        FROM itemsCatalogo i
+        JOIN catalogos c ON c.identificador=i.catalogo
+        JOIN productos pr ON pr.identificador=i.producto
+        WHERE i.identificador=? AND c.subasta=?
+        FOR UPDATE
+        """, "Item no encontrado", itemId, id);
     var winner = jdbc.queryForList("""
         SELECT p.identificador puja_id, a.cliente, p.importe, pr.duenio, pr.identificador producto, i.comision
         FROM pujos p
@@ -361,8 +390,15 @@ public class ApiController {
         JOIN productos pr ON pr.identificador=i.producto
         WHERE p.item=? ORDER BY p.importe DESC, p.identificador DESC LIMIT 1
         """, itemId);
-    if (winner.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "No hay pujas para cerrar");
-    var w = winner.get(0);
+    var w = winner.isEmpty()
+        ? Map.<String, Object>of(
+            "cliente", ensureCompanyBuyerClient(),
+            "importe", item.get("precioBase"),
+            "duenio", item.get("duenio"),
+            "producto", item.get("producto"),
+            "comision", item.get("comision"),
+            "empresa_compra", true)
+        : winner.get(0);
     BigDecimal importe = (BigDecimal) w.get("importe");
     BigDecimal comisionPct = (BigDecimal) w.get("comision");
     BigDecimal comision = importe.multiply(comisionPct).setScale(2, RoundingMode.HALF_UP);
@@ -372,20 +408,28 @@ public class ApiController {
         """, id, w.get("duenio"), w.get("producto"), w.get("cliente"), importe, comision);
     jdbc.update("UPDATE itemsCatalogo SET subastado='si' WHERE identificador=?", itemId);
     jdbc.update("UPDATE productos SET disponible='no' WHERE identificador=?", w.get("producto"));
+    boolean empresaCompra = Boolean.TRUE.equals(w.get("empresa_compra"));
+    if (empresaCompra) {
+      notifyOwnerIfClient(((Number) w.get("duenio")).intValue(),
+          "La empresa compro tu pieza",
+          "No hubo pujas. BidVault compro el bien por el precio base: " + importe + ".");
+    }
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         VALUES (?, 'Ganaste la subasta', ?, 'importante')
         """, w.get("cliente"), "Importe: " + importe + ". ComisiÃƒÆ’Ã‚Â³n: " + comision + ". CoordinÃƒÆ’Ã‚Â¡ envÃƒÆ’Ã‚Â­o o retiro.");
-    return Map.of("registro_id", registro, "importe", importe, "comision", comision);
+    return Map.of("registro_id", registro, "importe", importe, "comision", comision, "empresa_compra", empresaCompra);
   }
 
   @GetMapping("/payments/{clienteId}")
   List<Map<String, Object>> payments(@PathVariable int clienteId) {
+    ensureUserNotBlocked(clienteId);
     return jdbc.queryForList("SELECT * FROM medios_pago WHERE cliente=? ORDER BY activo DESC, identificador DESC", clienteId);
   }
 
   @PostMapping("/payments")
   Map<String, Object> addPayment(@RequestBody PaymentRequest request) {
+    ensureUserNotBlocked(request.clienteId());
     int id = insertAndReturnKey("""
         INSERT INTO medios_pago (cliente, tipo, moneda, entidad, referencia, monto_reservado, verificado, activo)
         VALUES (?, ?, ?, ?, ?, ?, 'no', 'si')
@@ -395,12 +439,14 @@ public class ApiController {
 
   @PostMapping("/favorites")
   Map<String, Object> favorite(@RequestBody FavoriteRequest request) {
+    ensureUserNotBlocked(request.clienteId());
     jdbc.update("INSERT IGNORE INTO favoritos (cliente, subasta) VALUES (?, ?)", request.clienteId(), request.subastaId());
     return Map.of("favorito", true);
   }
 
   @DeleteMapping("/favorites")
   Map<String, Object> unfavorite(@RequestBody FavoriteRequest request) {
+    ensureUserNotBlocked(request.clienteId());
     jdbc.update("DELETE FROM favoritos WHERE cliente=? AND subasta=?", request.clienteId(), request.subastaId());
     return Map.of("favorito", false);
   }
@@ -408,6 +454,7 @@ public class ApiController {
   @PostMapping("/sell-requests")
   @Transactional
   Map<String, Object> sellRequest(@RequestBody SellRequest request) {
+    ensureUserNotBlocked(request.duenioId());
     if (request.fotos() == null || request.fotos().size() < 6) {
       throw new ApiException(HttpStatus.BAD_REQUEST, "Debe cargar al menos 6 fotos");
     }
@@ -428,6 +475,7 @@ public class ApiController {
 
   @GetMapping("/profile/{clienteId}")
   Map<String, Object> profile(@PathVariable int clienteId) {
+    ensureUserNotBlocked(clienteId);
     return one("""
         SELECT p.identificador persona_id, p.nombre, p.direccion, pa.nombre pais, u.email, u.password_temporal,
                c.categoria, c.admitido,
@@ -442,6 +490,7 @@ public class ApiController {
 
   @GetMapping("/profile/{clienteId}/metrics")
   Map<String, Object> metrics(@PathVariable int clienteId) {
+    ensureUserNotBlocked(clienteId);
     var base = one("""
         SELECT p.nombre, c.categoria, c.admitido,
                (SELECT COUNT(*) FROM asistentes a WHERE a.cliente=c.identificador) subastas_asistidas,
@@ -486,6 +535,7 @@ public class ApiController {
   @PutMapping("/profile/{clienteId}")
   @Transactional
   Map<String, Object> updateProfile(@PathVariable int clienteId, @RequestBody UpdateProfileRequest request) {
+    ensureUserNotBlocked(clienteId);
     require(request.nombre(), "El nombre es obligatorio");
     require(request.apellido(), "El apellido es obligatorio");
     require(request.email(), "El email es obligatorio");
@@ -532,6 +582,7 @@ public class ApiController {
   @Transactional
   Map<String, Object> updatePassword(@PathVariable int clienteId, @RequestBody UpdatePasswordRequest request) {
     require(request.password(), "La nueva contraseÃƒÆ’Ã‚Â±a es obligatoria");
+    ensureUserNotBlocked(clienteId);
     jdbc.update("UPDATE usuarios_app SET password_hash=?, password_temporal='no' WHERE persona=?",
         encoder.encode(request.password()), clienteId);
     return one("""
@@ -548,11 +599,20 @@ public class ApiController {
 
   @GetMapping("/notifications/{clienteId}")
   List<Map<String, Object>> notifications(@PathVariable int clienteId) {
+    ensureUserNotBlocked(clienteId);
     return jdbc.queryForList("SELECT * FROM mensajes WHERE cliente=? ORDER BY creado_en DESC", clienteId);
+  }
+
+  @DeleteMapping("/notifications/{clienteId}")
+  Map<String, Object> clearNotifications(@PathVariable int clienteId) {
+    ensureUserNotBlocked(clienteId);
+    int deleted = jdbc.update("DELETE FROM mensajes WHERE cliente=?", clienteId);
+    return Map.of("deleted", deleted);
   }
 
   @GetMapping("/shipping/addresses")
   List<Map<String, Object>> addresses(@RequestParam int userId) {
+    ensureUserNotBlocked(userId);
     ensureAddressTable();
     return jdbc.queryForList("""
         SELECT identificador id, titulo, direccion, ciudad, pais, predeterminada, creado_en
@@ -564,6 +624,7 @@ public class ApiController {
 
   @GetMapping("/shipping/shipments")
   List<Map<String, Object>> shipments(@RequestParam int userId) {
+    ensureUserNotBlocked(userId);
     return jdbc.queryForList("""
         SELECT e.identificador id, e.estado, e.costo, e.codigo_seguimiento tracking,
                e.direccion, r.identificador registro_id, r.importe, r.comision,
@@ -584,6 +645,7 @@ public class ApiController {
 
   @GetMapping("/purchases/pending-shipping")
   List<Map<String, Object>> pendingShippingPurchases(@RequestParam int userId) {
+    ensureUserNotBlocked(userId);
     return jdbc.queryForList("""
         SELECT r.identificador registro_id, r.importe, r.comision,
                (r.importe + r.comision) total,
@@ -604,6 +666,7 @@ public class ApiController {
 
   @GetMapping("/invoices")
   List<Map<String, Object>> invoices(@RequestParam int userId) {
+    ensureUserNotBlocked(userId);
     return jdbc.queryForList("""
         SELECT fc.identificador id, fc.numero, fc.subtotal, fc.comision, fc.costo_envio, fc.total, fc.estado,
                fc.creado_en, fc.pagado_en, fc.registro registro_id, fc.envio envio_id, fc.medio_pago medio_pago_id,
@@ -624,6 +687,7 @@ public class ApiController {
   @PostMapping("/shipping/shipments")
   @Transactional
   Map<String, Object> createShipment(@RequestBody ShipmentRequest request) {
+    ensureUserNotBlocked(request.userId());
     ensureAddressTable();
     var address = one("""
         SELECT direccion, ciudad, pais
@@ -671,6 +735,7 @@ public class ApiController {
   @PutMapping("/invoices/{invoiceId}/pay")
   @Transactional
   Map<String, Object> payInvoice(@PathVariable int invoiceId, @RequestBody PayInvoiceRequest request) {
+    ensureUserNotBlocked(request.userId());
     var invoice = one("""
         SELECT fc.identificador, r.cliente,
                COALESCE(sc.moneda, 'ARS') moneda
@@ -724,6 +789,7 @@ public class ApiController {
   @PostMapping("/shipping/addresses")
   @Transactional
   Map<String, Object> addAddress(@RequestBody AddressRequest request) {
+    ensureUserNotBlocked(request.userId());
     ensureAddressTable();
     require(request.titulo(), "El titulo de la direccion es obligatorio");
     require(request.direccion(), "La direccion es obligatoria");
@@ -743,6 +809,7 @@ public class ApiController {
   @PutMapping("/shipping/addresses/{id}")
   @Transactional
   Map<String, Object> updateAddress(@PathVariable int id, @RequestBody AddressRequest request) {
+    ensureUserNotBlocked(request.userId());
     ensureAddressTable();
     require(request.titulo(), "El titulo de la direccion es obligatorio");
     require(request.direccion(), "La direccion es obligatoria");
@@ -761,6 +828,7 @@ public class ApiController {
 
   @GetMapping("/my-pieces/{duenioId}")
   List<Map<String, Object>> myPieces(@PathVariable int duenioId) {
+    ensureUserNotBlocked(duenioId);
     return jdbc.queryForList("""
         SELECT sp.identificador id, sp.titulo, sp.descripcion, sp.estado, sp.motivo_rechazo,
                sp.deposito, sp.seguro, sp.creado_en,
@@ -782,6 +850,7 @@ public class ApiController {
 
   @GetMapping("/my-pieces/{solicitudId}/custody")
   Map<String, Object> pieceCustody(@PathVariable int solicitudId, @RequestParam int duenioId) {
+    ensureUserNotBlocked(duenioId);
     return one("""
         SELECT sp.identificador id, sp.titulo, sp.deposito, sp.seguro,
                spe.poliza_compania, spe.poliza_numero, spe.poliza_cobertura
@@ -796,6 +865,7 @@ public class ApiController {
   @PutMapping("/my-pieces/{solicitudId}/proposal/accept")
   @Transactional
   Map<String, Object> acceptPieceProposal(@PathVariable int solicitudId, @RequestBody ClientRequest request) {
+    ensureUserNotBlocked(request.clienteId());
     var proposal = one("""
         SELECT spe.identificador propuesta_id
         FROM solicitudes_propuestas_empresa spe
@@ -813,6 +883,7 @@ public class ApiController {
   @PutMapping("/my-pieces/{solicitudId}/proposal/reject")
   @Transactional
   Map<String, Object> rejectPieceProposal(@PathVariable int solicitudId, @RequestBody ClientRequest request) {
+    ensureUserNotBlocked(request.clienteId());
     var proposal = one("""
         SELECT spe.identificador propuesta_id
         FROM solicitudes_propuestas_empresa spe
@@ -832,10 +903,17 @@ public class ApiController {
   }
 
   private void ensureCanParticipate(int clienteId, int subastaId, boolean requirePayment) {
+    ensureUserNotBlocked(clienteId);
     var rows = jdbc.queryForList("""
         SELECT c.admitido, c.categoria cliente_categoria, s.categoria subasta_categoria,
+               COALESCE(se.estado_app, s.estado) subasta_estado,
+               s.fecha,
+               GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) tiempo_restante_segundos,
                EXISTS(SELECT 1 FROM medios_pago m WHERE m.cliente=c.identificador AND m.verificado='si' AND m.activo='si') pago_ok
-        FROM clientes c CROSS JOIN subastas s
+        FROM clientes c
+        CROSS JOIN subastas s
+        LEFT JOIN subastas_estados_app se ON se.subasta=s.identificador
+        LEFT JOIN subastas_config sc ON sc.subasta=s.identificador
         WHERE c.identificador=? AND s.identificador=?
         """, clienteId, subastaId);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "Cliente o subasta inexistente");
@@ -843,6 +921,10 @@ public class ApiController {
     if (!"si".equals(row.get("admitido"))) throw new ApiException(HttpStatus.FORBIDDEN, "Cliente no admitido");
     if (rank(row.get("cliente_categoria").toString()) < rank(row.get("subasta_categoria").toString())) {
       throw new ApiException(HttpStatus.FORBIDDEN, "Tu categoria no tiene permiso para ingresar a esta subasta");
+    }
+    if (!"abierta".equals(row.get("subasta_estado")) || !java.time.LocalDate.now().toString().equals(Objects.toString(row.get("fecha"))) ||
+        ((Number) row.get("tiempo_restante_segundos")).intValue() <= 0) {
+      throw new ApiException(HttpStatus.FORBIDDEN, "La subasta no esta en vivo en este momento");
     }
     if (requirePayment && ((Number) row.get("pago_ok")).intValue() == 0) {
       throw new ApiException(HttpStatus.FORBIDDEN, "Se requiere al menos un medio de pago verificado");
@@ -886,6 +968,100 @@ public class ApiController {
         INSERT INTO facturas_compra (registro, envio, numero, subtotal, comision, costo_envio, total, estado)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'pendiente_pago')
         """, registroId, envioId, numero, subtotal, comision, costoEnvio, total);
+  }
+
+  private void ensureUserNotBlocked(int clienteId) {
+    refreshOverduePenalties();
+    var rows = jdbc.queryForList("""
+        SELECT identificador, importe_multa
+        FROM multas_incumplimiento
+        WHERE cliente=? AND estado='derivada_justicia'
+        LIMIT 1
+        """, clienteId);
+    if (!rows.isEmpty()) {
+      throw new ApiException(HttpStatus.FORBIDDEN,
+          "Tu usuario esta bloqueado por incumplimiento de pago. Tenes una multa pendiente del 10% y el caso fue derivado a la justicia.");
+    }
+  }
+
+  private void refreshOverduePenalties() {
+    ensurePenaltyTable();
+    jdbc.update("""
+        INSERT INTO multas_incumplimiento
+        (cliente, registro, factura, importe_base, importe_multa, vencimiento, estado, motivo)
+        SELECT r.cliente, r.identificador, fc.identificador, fc.total,
+               ROUND(fc.total * 0.10, 2),
+               DATE_ADD(fc.creado_en, INTERVAL 72 HOUR),
+               'derivada_justicia',
+               'Incumplimiento de pago de factura dentro del plazo de 72 horas'
+        FROM facturas_compra fc
+        JOIN registroDeSubasta r ON r.identificador=fc.registro
+        WHERE fc.estado='pendiente_pago'
+          AND fc.creado_en <= DATE_SUB(NOW(), INTERVAL 72 HOUR)
+          AND NOT EXISTS (SELECT 1 FROM multas_incumplimiento m WHERE m.factura=fc.identificador)
+        """);
+  }
+
+  private void ensurePenaltyTable() {
+    jdbc.execute("""
+        CREATE TABLE IF NOT EXISTS multas_incumplimiento (
+          identificador INT NOT NULL AUTO_INCREMENT,
+          cliente INT NOT NULL,
+          registro INT NOT NULL,
+          factura INT NOT NULL,
+          importe_base DECIMAL(18,2) NOT NULL,
+          importe_multa DECIMAL(18,2) NOT NULL,
+          vencimiento DATETIME NOT NULL,
+          estado VARCHAR(30) NOT NULL DEFAULT 'pendiente',
+          motivo VARCHAR(300) NOT NULL,
+          creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          pagado_en TIMESTAMP NULL,
+          CONSTRAINT pk_multas_incumplimiento PRIMARY KEY (identificador),
+          CONSTRAINT uq_multas_factura UNIQUE (factura),
+          CONSTRAINT chk_multa_importe CHECK (importe_base > 0 AND importe_multa > 0),
+          CONSTRAINT chk_multa_estado CHECK (estado IN ('pendiente','derivada_justicia','pagada')),
+          CONSTRAINT fk_multas_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador),
+          CONSTRAINT fk_multas_registro FOREIGN KEY (registro) REFERENCES registroDeSubasta(identificador),
+          CONSTRAINT fk_multas_factura FOREIGN KEY (factura) REFERENCES facturas_compra(identificador)
+        )
+        """);
+  }
+
+  private int ensureCompanyBuyerClient() {
+    var rows = jdbc.queryForList("""
+        SELECT c.identificador
+        FROM clientes c
+        JOIN personas p ON p.identificador=c.identificador
+        WHERE p.documento='EMPRESA-BIDVAULT'
+        """);
+    if (!rows.isEmpty()) return ((Number) rows.get(0).get("identificador")).intValue();
+    int personaId = insertAndReturnKey("""
+        INSERT INTO personas (documento, nombre, direccion, estado)
+        VALUES ('EMPRESA-BIDVAULT', 'BidVault Empresa', 'Galeria Central', 'activo')
+        """);
+    jdbc.update("""
+        INSERT INTO clientes (identificador, numeroPais, admitido, categoria, verificador)
+        VALUES (?, 1, 'si', 'platino', 1)
+        """, personaId);
+    return personaId;
+  }
+
+  private void notifyOwnerIfClient(int ownerId, String title, String body) {
+    var rows = jdbc.queryForList("SELECT identificador FROM clientes WHERE identificador=?", ownerId);
+    if (rows.isEmpty()) return;
+    jdbc.update("""
+        INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
+        VALUES (?, ?, ?, 'importante')
+        """, ownerId, title, body);
+  }
+
+  private int countActiveSpectators(int subastaId) {
+    Integer count = jdbc.queryForObject("""
+        SELECT COUNT(*)
+        FROM sesiones_subasta
+        WHERE subasta=? AND activa='si'
+        """, Integer.class, subastaId);
+    return count == null ? 0 : count;
   }
 
   private Map<String, Object> one(String sql, String notFoundMessage, Object... args) {

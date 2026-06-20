@@ -665,20 +665,43 @@ function formatDisplayDate(value: string) {
   return year && month && day ? `${day}/${month}/${year}` : value;
 }
 
+function formatDuration(totalSeconds: number) {
+  const safe = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  return [hours, minutes, seconds].map((value) => String(value).padStart(2, '0')).join(':');
+}
+
 function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayments }: { auctionId: number; initialProduct: ProductItem | null; session: UserSession | null; onBack: () => void; onPayments: () => void }) {
   const [detail, setDetail] = useState<AuctionDetail | null>(null);
   const [selected, setSelected] = useState<ProductItem | null>(null);
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [liveStatus, setLiveStatus] = useState('Conectando en vivo...');
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
 
-  const load = () => api.auction(auctionId, session?.userId).then((data) => {
-    const current = initialProduct ? data.products.find((item: ProductItem) => item.id === initialProduct.id) ?? data.products[0] : data.products[0];
+  const load = (resetAmount = true) => api.auction(auctionId, session?.userId).then((data) => {
+    const selectedId = selected?.id ?? initialProduct?.id;
+    const current = selectedId ? data.products.find((item: ProductItem) => item.id === selectedId) ?? data.products[0] : data.products[0];
     setDetail(data);
     setSelected(current);
-    setAmount(String(current?.ofertaMinima ?? ''));
+    setRemainingSeconds(data.auction.tiempoRestanteSegundos);
+    if (resetAmount) setAmount(String(current?.ofertaMinima ?? ''));
   });
   useEffect(() => { load().catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.')); }, [auctionId]);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setRemainingSeconds((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    const refresh = setInterval(() => {
+      load(false).catch(() => undefined);
+    }, 15000);
+    return () => clearInterval(refresh);
+  }, [auctionId, session?.userId]);
   useEffect(() => {
     const socket = new WebSocket(`${WS_URL}/ws/auctions/${auctionId}`);
     socket.onopen = () => setLiveStatus('Sala en vivo conectada');
@@ -688,10 +711,13 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
       try {
         const event = JSON.parse(String(message.data));
         if (event.tipo === 'NUEVA_PUJA') {
-          await load();
+          await load(false);
           if (Number(event.clienteId) !== session?.userId) {
             setLiveStatus(`Nueva puja: ${Number(event.importe).toLocaleString()} ${detail?.auction.moneda ?? ''}`);
           }
+        } else if (event.tipo === 'ESPECTADORES') {
+          await load(false);
+          setLiveStatus('Espectadores actualizados');
         }
       } catch {
         setLiveStatus('Actualización en vivo recibida');
@@ -736,7 +762,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
             <RankBadge category={detail.auction.categoria} />
           </View>
           <View style={styles.statsRow}>
-            <Stat label="Tiempo restante" value="01:15:14" />
+            <Stat label="Tiempo restante" value={formatDuration(remainingSeconds)} />
             <Stat label="Espectadores" value={String(detail.auction.espectadores)} />
           </View>
         </View>
@@ -1052,6 +1078,16 @@ function UploadScreen({ session, onSettings }: { session: UserSession | null; on
 function NotificationsScreen({ session, onSettings, onCoordinate, onTrack }: { session: UserSession | null; onSettings: () => void; onCoordinate: () => void; onTrack: () => void }) {
   const [items, setItems] = useState<any[]>([]);
   useEffect(() => { if (session) api.notifications(session.userId).then((data: any) => setItems(data)); }, [session]);
+  const clear = async () => {
+    if (!session || items.length === 0) return;
+    try {
+      await api.clearNotifications(session.userId);
+      setItems([]);
+      Alert.alert('Notificaciones', 'Se limpiaron tus notificaciones.');
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos limpiar las notificaciones.');
+    }
+  };
   const canTrackShipment = (item: any) => {
     const text = `${item.titulo ?? ''} ${item.mensaje ?? ''}`.toLowerCase();
     return text.includes('envío') || text.includes('envio') || text.includes('despach') || text.includes('seguimiento') || text.includes('en camino');
@@ -1059,6 +1095,12 @@ function NotificationsScreen({ session, onSettings, onCoordinate, onTrack }: { s
   return (
     <Screen>
       <SimpleTitleHeader title="Notificaciones" />
+      {session && items.length ? (
+        <Pressable onPress={clear} style={styles.clearNotificationsButton}>
+          <Ionicons name="trash-outline" size={18} color={colors.burgundy} />
+          <Text style={styles.clearNotificationsText}>Limpiar notificaciones</Text>
+        </Pressable>
+      ) : null}
       {items.map((item) => (
         <Pressable key={item.id} onPress={String(item.titulo).includes('Ganaste') ? onCoordinate : undefined} style={styles.notification}>
           <Text style={styles.notificationTitle}>{item.titulo}</Text>
@@ -2096,6 +2138,8 @@ const styles = StyleSheet.create({
   emptyText: { color: colors.muted, textAlign: 'center', marginTop: 18, fontWeight: '700' },
   notification: { backgroundColor: colors.white, borderRadius: 8, padding: 16, marginBottom: 12, borderLeftColor: colors.burgundy, borderLeftWidth: 4 },
   notificationTitle: { color: colors.ink, fontWeight: '900', fontSize: 18 },
+  clearNotificationsButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: colors.white, borderRadius: 8, borderWidth: 1, borderColor: colors.gold, paddingVertical: 12, marginBottom: 14, ...shadow },
+  clearNotificationsText: { color: colors.burgundy, fontWeight: '900' },
   notifAction: { alignSelf: 'flex-start', backgroundColor: colors.burgundy, color: colors.cream, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 4, fontWeight: '900', marginTop: 10 },
   dateText: { color: colors.gold, fontWeight: '900', marginTop: 8 },
   profilePanel: { backgroundColor: colors.burgundy, borderRadius: 8, padding: 18, marginBottom: 16 },
