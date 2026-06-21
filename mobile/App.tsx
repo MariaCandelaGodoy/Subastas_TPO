@@ -901,15 +901,18 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
   const [selected, setSelected] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [auctionCurrency, setAuctionCurrency] = useState('ARS');
+  const [requiredGuarantee, setRequiredGuarantee] = useState(0);
   useEffect(() => {
     Promise.all([api.payments(session.userId), api.auction(auctionId, session.userId)]).then(([paymentRows, detail]: any[]) => {
       setItems(paymentRows);
       setAuctionCurrency(String(detail.auction.moneda ?? 'ARS').toUpperCase());
+      setRequiredGuarantee(Math.max(...detail.products.map((product: ProductItem) => product.precioBase), 0));
     });
   }, [auctionId, session.userId]);
   const isCompatible = (item: any) => String(item.moneda ?? (item.internacional ? 'USD' : 'ARS')).toUpperCase() === auctionCurrency;
+  const hasEnoughLimit = (item: any) => !String(item.tipo ?? '').toUpperCase().includes('CHEQUE') || Number(item.garantiaDisponible ?? 0) >= requiredGuarantee;
   const verifiedItems = items.filter((item) => item.estado === 'VERIFICADO');
-  const compatibleVerifiedItems = verifiedItems.filter(isCompatible);
+  const compatibleVerifiedItems = verifiedItems.filter((item) => isCompatible(item) && hasEnoughLimit(item));
   const selectPayment = (item: any) => {
     if (item.estado !== 'VERIFICADO') {
       Alert.alert('Pendiente de verificacion', 'Este medio todavia no fue verificado. No se puede usar como garantia para entrar a la subasta.');
@@ -919,12 +922,17 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
       Alert.alert('Medio no compatible', `Esta subasta opera en ${auctionCurrency}. Selecciona un medio de pago en esa moneda.`);
       return;
     }
+    if (!hasEnoughLimit(item)) {
+      Alert.alert('Límite insuficiente', `El cheque certificado debe cubrir al menos ${requiredGuarantee.toLocaleString()} ${auctionCurrency}.`);
+      return;
+    }
     setSelected(item.id);
   };
   const accept = async () => {
     const method = items.find((item) => item.id === selected);
     if (!method) return Alert.alert('Método requerido', 'Selecciona un medio verificado para dejar constancia de capacidad de pago.');
     if (!isCompatible(method)) return Alert.alert('Medio no compatible', `Esta subasta opera en ${auctionCurrency}. Selecciona un medio de pago en esa moneda.`);
+    if (!hasEnoughLimit(method)) return Alert.alert('Límite insuficiente', `El cheque certificado debe cubrir al menos ${requiredGuarantee.toLocaleString()} ${auctionCurrency}.`);
     try {
       setLoading(true);
       await api.selectAuctionPayment({ userId: session.userId, auctionId, paymentMethodId: selected });
@@ -942,9 +950,9 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
       <ConfigHeader title="Métodos de pago" onBack={onBack} />
       <Text style={styles.description}>Esta subasta opera en {auctionCurrency}. Solo podés usar medios verificados en esa moneda.</Text>
       <Text style={styles.sectionTitle}>Tarjetas</Text>
-      {items.filter((i) => String(i.tipo).includes('TARJETA')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} disabled={!isCompatible(item)} onPress={() => selectPayment(item)} />)}
+      {items.filter((i) => String(i.tipo).includes('TARJETA')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} disabled={!isCompatible(item) || !hasEnoughLimit(item)} requiredGuarantee={requiredGuarantee} onPress={() => selectPayment(item)} />)}
       <Text style={styles.sectionTitle}>Cheques</Text>
-      {items.filter((i) => String(i.tipo).includes('CHEQUE')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} disabled={!isCompatible(item)} onPress={() => selectPayment(item)} />)}
+      {items.filter((i) => String(i.tipo).includes('CHEQUE')).map((item) => <SelectablePayment key={item.id} item={item} selected={selected === item.id} disabled={!isCompatible(item) || !hasEnoughLimit(item)} requiredGuarantee={requiredGuarantee} onPress={() => selectPayment(item)} />)}
       {items.length === 0 ? <Text style={styles.emptyText}>No tenes medios cargados. Agrega una tarjeta o cheque desde configuracion.</Text> : null}
       {items.length > 0 && verifiedItems.length === 0 ? <Text style={styles.emptyText}>Tus medios estan pendientes de verificacion. Necesitas uno verificado para entrar.</Text> : null}
       {verifiedItems.length > 0 && compatibleVerifiedItems.length === 0 ? <Text style={styles.emptyText}>No tenes medios verificados en {auctionCurrency} para esta subasta.</Text> : null}
@@ -953,16 +961,20 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
   );
 }
 
-function SelectablePayment({ item, selected, disabled, onPress }: { item: any; selected: boolean; disabled?: boolean; onPress: () => void }) {
+function SelectablePayment({ item, selected, disabled, requiredGuarantee = 0, onPress }: { item: any; selected: boolean; disabled?: boolean; requiredGuarantee?: number; onPress: () => void }) {
   const verified = item.estado === 'VERIFICADO';
   const blocked = disabled || !verified;
+  const isCheque = String(item.tipo ?? '').toUpperCase().includes('CHEQUE');
+  const enoughLimit = !isCheque || Number(item.garantiaDisponible ?? 0) >= requiredGuarantee;
   return (
     <Pressable onPress={onPress} style={[styles.paymentSelectCard, blocked && styles.paymentSelectDisabled]}>
       <View style={{ flex: 1 }}>
         <Text style={styles.paymentBrand}>{item.etiqueta}</Text>
         <Text style={styles.description}>.... .... .... {item.ultimosDigitos}</Text>
         <Text style={[styles.verified, !verified && styles.pendingText]}>{item.estado} {item.moneda ?? (item.internacional ? 'USD' : 'ARS')} {item.internacional ? 'INTERNACIONAL' : 'NACIONAL'}</Text>
+        {isCheque ? <Text style={styles.description}>Límite: {Number(item.garantiaDisponible ?? 0).toLocaleString()} {item.moneda}</Text> : null}
         {disabled ? <Text style={styles.pendingText}>No compatible con esta subasta</Text> : null}
+        {!enoughLimit ? <Text style={styles.pendingText}>Límite insuficiente para esta subasta</Text> : null}
       </View>
       <View style={[styles.checkBox, selected && styles.checkBoxSelected, blocked && styles.checkBoxDisabled]} />
     </Pressable>
@@ -1220,6 +1232,7 @@ function PurchaseInvoiceScreen({ session, invoice, onBack, onDone }: { session: 
     const itemType = String(item.tipo ?? '').toUpperCase();
     if (itemCurrency !== currency) return false;
     if (currency === 'USD') return itemType.includes('CUENTA') || itemType.includes('TARJETA');
+    if (itemType.includes('CHEQUE') && Number(item.garantiaDisponible ?? 0) < total) return false;
     return true;
   };
   const compatiblePayments = payments.filter(isPaymentCompatible);
@@ -1229,6 +1242,9 @@ function PurchaseInvoiceScreen({ session, invoice, onBack, onDone }: { session: 
     if (!method) return Alert.alert('Medio de pago requerido', 'Seleccioná un medio de pago.');
     if (method.estado !== 'VERIFICADO') return Alert.alert('Medio pendiente', 'Solo podés pagar con medios verificados.');
     if (!isPaymentCompatible(method)) return Alert.alert('Medio no compatible', currency === 'USD' ? 'Las subastas en dólares solo pueden pagarse con transferencia o tarjeta internacional en USD.' : `Seleccioná un medio de pago en ${currency}.`);
+    if (String(method.tipo ?? '').toUpperCase().includes('CHEQUE') && Number(method.garantiaDisponible ?? 0) < total) {
+      return Alert.alert('Límite insuficiente', `El cheque certificado debe cubrir el total de la factura: ${total.toLocaleString()} ${currency}.`);
+    }
     setPaying(true);
     try {
       await api.payInvoice(invoiceId, { userId: session.userId, paymentMethodId: selected });
