@@ -27,7 +27,7 @@ jobs:
  
       - name: Build and push image
         run: |
-          gcloud builds submit --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/bidvault-api ./backend
+          gcloud builds submit --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/bidvault-api ./backend --suppress-logs
  
       - name: Deploy to Cloud Run
         run: |
