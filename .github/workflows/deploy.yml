@@ -3,6 +3,8 @@ name: Deploy to Cloud Run
 on:
   push:
     branches: [main]
+    paths:
+      - 'backend/**'
 
 jobs:
   deploy:
@@ -19,7 +21,7 @@ jobs:
 
       - name: Build and push image
         run: |
-          gcloud builds submit --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/bidvault-api .
+          gcloud builds submit --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/bidvault-api ./backend
 
       - name: Deploy to Cloud Run
         run: |
