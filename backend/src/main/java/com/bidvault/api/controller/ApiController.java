@@ -42,7 +42,7 @@ public class ApiController {
 
   @GetMapping("/health")
   Map<String, Object> health() {
-    return Map.of("status", "ok", "database", "bidvault");
+    return Map.of("status", "200: ok", "database", "bidvault");
   }
 
   @PostMapping("/auth/login")
