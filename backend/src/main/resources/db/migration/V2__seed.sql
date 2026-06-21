@@ -15,7 +15,7 @@ INSERT INTO empleados (identificador, cargo, sector) VALUES
 (1, 'Verificadora senior', NULL);
 
 INSERT INTO sectores (identificador, nombreSector, codigoSector, responsableSector) VALUES
-(1, 'Verificación y catálogo', 'VER', 1);
+(1, 'Verificacion y catálogo', 'VER', 1);
 
 UPDATE empleados SET sector = 1 WHERE identificador = 1;
 
@@ -23,7 +23,7 @@ INSERT INTO clientes (identificador, numeroPais, admitido, categoria, verificado
 (3, 32, 'si', 'plata', 1),
 (6, 32, 'no', 'comun', 1);
 
-INSERT INTO duenios (identificador, numeroPais, verificaciónFinanciera, verificaciónJudicial, calificacionRiesgo, verificador) VALUES
+INSERT INTO duenios (identificador, numeroPais, verificacionFinanciera, verificacionJudicial, calificacionRiesgo, verificador) VALUES
 (4, 32, 'si', 'si', 2, 1),
 (5, 858, 'si', 'si', 3, 1),
 (3, 32, 'si', 'si', 2, 1);

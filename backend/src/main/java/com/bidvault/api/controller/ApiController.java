@@ -134,7 +134,7 @@ public class ApiController {
         VALUES (?, ?, 'no', 'comun', 1)
         """, personaId, numeroPais);
     jdbc.update("""
-        INSERT INTO duenios (identificador, numeroPais, `verificaciÃƒÆ’Ã‚Â³nFinanciera`, `verificaciÃƒÆ’Ã‚Â³nJudicial`, calificacionRiesgo, verificador)
+        INSERT INTO duenios (identificador, numeroPais, `verificacionFinanciera`, `verificacionJudicial`, calificacionRiesgo, verificador)
         VALUES (?, ?, 'no', 'no', 6, 1)
         """, personaId, numeroPais);
     String temporaryPassword = temporaryPassword();
