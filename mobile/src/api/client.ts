@@ -73,6 +73,8 @@ export type AuctionSummary = {
   moneda: 'ARS' | 'USD';
   ubicacion: string;
   espectadores: number;
+  tiempoRestanteSegundos: number;
+  duracionMinutos: number;
   precioDesde: number;
   productoDestacado: string;
   imagenPortada?: string;
@@ -165,6 +167,8 @@ function mapAuction(raw: any): AuctionSummary {
     moneda: raw.moneda ?? 'ARS',
     ubicacion: raw.ubicacion ?? '',
     espectadores: Number(raw.espectadores ?? 0),
+    tiempoRestanteSegundos: Number(raw.tiempo_restante_segundos ?? raw.tiempoRestanteSegundos ?? 0),
+    duracionMinutos: Number(raw.duracion_minutos ?? raw.duracionMinutos ?? 0),
     precioDesde: Number(raw.precio_desde ?? raw.precioDesde ?? 0),
     productoDestacado: raw.producto_destacado ?? raw.titulo ?? '',
     imagenPortada: raw.imagen_portada ?? raw.imagenPortada ?? undefined,
@@ -202,6 +206,7 @@ export const api = {
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       if (message.includes('backend') || message.includes('conectar') || message.includes('respondi')) throw new Error(message);
+      if (message.toLowerCase().includes('bloqueado') || message.toLowerCase().includes('bloqueada') || message.toLowerCase().includes('incumplimiento')) throw new Error(message);
       throw new Error('El mail o la clave son incorrectos o no te encuentras registrado.');
     }
   },
@@ -344,6 +349,7 @@ export const api = {
       creadoEn: item.creado_en,
     }));
   },
+  clearNotifications: (userId: number) => request(`/notifications/${userId}`, { method: 'DELETE' }),
   submitProduct: (payload: Record<string, unknown>) =>
     request('/sell-requests', {
       method: 'POST',

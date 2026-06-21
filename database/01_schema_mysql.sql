@@ -173,8 +173,10 @@ CREATE TABLE subastas_estados_app (
 CREATE TABLE subastas_config (
   subasta INT NOT NULL,
   moneda VARCHAR(3) NOT NULL DEFAULT 'ARS',
+  duracion_minutos INT NOT NULL DEFAULT 90,
   CONSTRAINT pk_subastas_config PRIMARY KEY (subasta),
   CONSTRAINT chk_subastas_config_moneda CHECK (moneda IN ('ARS','USD')),
+  CONSTRAINT chk_subastas_config_duracion CHECK (duracion_minutos > 0),
   CONSTRAINT fk_subastas_config_subastas FOREIGN KEY (subasta) REFERENCES subastas(identificador)
 );
 
@@ -410,4 +412,25 @@ CREATE TABLE mensajes (
   CONSTRAINT chk_mensaje_tipo CHECK (tipo IN ('importante','otra')),
   CONSTRAINT chk_mensaje_leido CHECK (leido IN ('si','no')),
   CONSTRAINT fk_mensajes_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador)
+);
+
+CREATE TABLE multas_incumplimiento (
+  identificador INT NOT NULL AUTO_INCREMENT,
+  cliente INT NOT NULL,
+  registro INT NOT NULL,
+  factura INT NOT NULL,
+  importe_base DECIMAL(18,2) NOT NULL,
+  importe_multa DECIMAL(18,2) NOT NULL,
+  vencimiento DATETIME NOT NULL,
+  estado VARCHAR(30) NOT NULL DEFAULT 'pendiente',
+  motivo VARCHAR(300) NOT NULL,
+  creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  pagado_en TIMESTAMP NULL,
+  CONSTRAINT pk_multas_incumplimiento PRIMARY KEY (identificador),
+  CONSTRAINT uq_multas_factura UNIQUE (factura),
+  CONSTRAINT chk_multa_importe CHECK (importe_base > 0 AND importe_multa > 0),
+  CONSTRAINT chk_multa_estado CHECK (estado IN ('pendiente','derivada_justicia','pagada')),
+  CONSTRAINT fk_multas_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador),
+  CONSTRAINT fk_multas_registro FOREIGN KEY (registro) REFERENCES registroDeSubasta(identificador),
+  CONSTRAINT fk_multas_factura FOREIGN KEY (factura) REFERENCES facturas_compra(identificador)
 );

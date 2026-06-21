@@ -141,6 +141,7 @@ La app considera "En vivo" solo a las subastas abiertas cuya fecha es el dia act
 | `solicitudes_propuestas_empresa` | La empresa envia propuesta al usuario | Precio base, comision, fecha, seguro y estado |
 | `envios` | Flujo posterior a ganar subasta | Direccion, seguimiento y estado |
 | `facturas_compra` | Compra ganada necesita factura | Totales, comision, envio, medio y estado de pago |
+| `multas_incumplimiento` | La consigna exige multa y bloqueo por falta de pago | Guarda 10% de multa, vencimiento de 72hs, estado y derivacion a justicia |
 
 ## Datos demo vs hardcodeo
 
@@ -188,3 +189,13 @@ Las salas de puja usan WebSocket nativo de Spring Boot.
 - Cuando el front recibe el evento, vuelve a pedir el detalle de la subasta y actualiza la ultima oferta, el minimo y el maximo permitido.
 
 Esto evita hardcodear valores en pantalla: la BD sigue siendo la verdad, y el WebSocket solo sirve para avisar cambios en vivo sin tener que refrescar manualmente.
+
+## Cierre sin pujas
+
+Si un item se cierra sin pujas, `closeItem` registra la compra a nombre de `BidVault Empresa` por el precio base del item. Esto cumple la regla de la consigna: si nadie puja, la empresa compra el bien por el precio base.
+
+## Multas y bloqueo
+
+Cuando una factura queda `pendiente_pago` por mas de 72 horas, el backend crea una fila en `multas_incumplimiento` con el 10% del total de la factura y estado `derivada_justicia`.
+
+Mientras exista una multa en `derivada_justicia`, el usuario queda bloqueado: no puede iniciar sesion ni usar servicios privados de la app. Para levantar el bloqueo, la empresa puede ejecutar `database/empresa/05_marcar_multa_pagada.sql`.
