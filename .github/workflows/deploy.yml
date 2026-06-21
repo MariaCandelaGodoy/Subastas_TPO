@@ -1,34 +1,48 @@
 name: Deploy to Cloud Run
- 
+
 on:
   push:
     branches: [main]
-    paths:
-      - 'backend/**'
   workflow_dispatch:
- 
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
- 
+
       - id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
- 
+
       - uses: google-github-actions/setup-gcloud@v2
- 
-      - name: Debug - listar contenido de backend
-        run: |
-          pwd
-          ls -la ./backend
- 
+
       - name: Build and push image
         run: |
-          gcloud builds submit --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/bidvault-api ./backend --suppress-logs
- 
+          BUILD_ID=$(gcloud builds submit \
+            --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/bidvault-api \
+            . \
+            --async \
+            --format="value(id)")
+
+          echo "Build ID: $BUILD_ID"
+
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --format="value(status)")
+            echo "Estado actual: $STATUS"
+
+            if [[ "$STATUS" == "SUCCESS" ]]; then
+              echo "Build exitoso"
+              break
+            elif [[ "$STATUS" == "FAILURE" || "$STATUS" == "INTERNAL_ERROR" || "$STATUS" == "TIMEOUT" || "$STATUS" == "CANCELLED" ]]; then
+              echo "Build falló con estado: $STATUS"
+              exit 1
+            fi
+
+            sleep 10
+          done
+
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy bidvault-api \
@@ -36,3 +50,4 @@ jobs:
             --region us-central1 \
             --platform managed \
             --allow-unauthenticated
+
