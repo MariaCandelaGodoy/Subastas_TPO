@@ -1,5 +1,6 @@
 {
   "expo": {
+    "jsEngine": "hermes",
     "name": "BidVault",
     "slug": "bidvault",
     "version": "1.0.0",
@@ -25,7 +26,7 @@
       }
     },
     "extra": {
-      "apiUrl": "http://192.168.100.8:8080/api"
+      "apiUrl": "https://bidvault-api-913021689473.us-central1.run.app/api"
     },
     "plugins": [
       "expo-asset"
