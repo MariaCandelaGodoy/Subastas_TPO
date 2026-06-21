@@ -711,7 +711,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
       try {
         const event = JSON.parse(String(message.data));
         if (event.tipo === 'NUEVA_PUJA') {
-          await load(false);
+          await load(true);
           if (Number(event.clienteId) !== session?.userId) {
             setLiveStatus(`Nueva puja: ${Number(event.importe).toLocaleString()} ${detail?.auction.moneda ?? ''}`);
           }
