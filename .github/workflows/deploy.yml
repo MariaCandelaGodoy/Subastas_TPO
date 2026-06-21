@@ -3,6 +3,7 @@ name: Deploy to Cloud Run
 on:
   push:
     branches: [main]
+    paths: 'backend/**'
   workflow_dispatch:
 
 jobs:
@@ -22,7 +23,7 @@ jobs:
         run: |
           BUILD_ID=$(gcloud builds submit \
             --tag gcr.io/${{ secrets.GCP_PROJECT_ID }}/bidvault-api \
-            . \
+            ./backend \
             --async \
             --format="value(id)")
 
