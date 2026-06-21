@@ -294,8 +294,12 @@ public class ApiController {
       throw new ApiException(HttpStatus.CONFLICT, "Ya estÃƒÆ’Ã‚Â¡s conectado a otra subasta. SalÃƒÆ’Ã‚Â­ de esa sala antes de ingresar a una nueva.");
     }
     var payment = one("""
-        SELECT m.identificador, m.verificado, m.moneda,
-               COALESCE(sc.moneda, 'ARS') subasta_moneda
+        SELECT m.identificador, m.verificado, m.moneda, m.tipo, m.monto_reservado,
+               COALESCE(sc.moneda, 'ARS') subasta_moneda,
+               (SELECT MAX(i.precioBase)
+                FROM catalogos ca
+                JOIN itemsCatalogo i ON i.catalogo=ca.identificador
+                WHERE ca.subasta=s.identificador AND i.subastado='no') precio_garantia
         FROM medios_pago
         m JOIN subastas s ON s.identificador=?
         LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
@@ -304,6 +308,7 @@ public class ApiController {
     if (!Objects.equals(payment.get("moneda"), payment.get("subasta_moneda"))) {
       throw new ApiException(HttpStatus.BAD_REQUEST, "El medio de pago debe estar en " + payment.get("subasta_moneda") + " para ingresar a esta subasta.");
     }
+    ensurePaymentLimit(payment, (BigDecimal) payment.get("precio_garantia"), "entrar a esta subasta");
     ensureAuctionGuaranteeTable();
     jdbc.update("""
         INSERT INTO garantias_subasta (cliente, subasta, medio_pago, estado_verificacion)
@@ -737,7 +742,7 @@ public class ApiController {
   Map<String, Object> payInvoice(@PathVariable int invoiceId, @RequestBody PayInvoiceRequest request) {
     ensureUserNotBlocked(request.userId());
     var invoice = one("""
-        SELECT fc.identificador, r.cliente,
+        SELECT fc.identificador, fc.total, r.cliente,
                COALESCE(sc.moneda, 'ARS') moneda
         FROM facturas_compra fc
         JOIN registroDeSubasta r ON r.identificador=fc.registro
@@ -749,7 +754,7 @@ public class ApiController {
       throw new ApiException(HttpStatus.FORBIDDEN, "La factura no pertenece al usuario");
     }
     var payment = one("""
-        SELECT identificador, verificado, tipo, moneda
+        SELECT identificador, verificado, tipo, moneda, monto_reservado
         FROM medios_pago
         WHERE identificador=? AND cliente=? AND activo='si'
         """, "Medio de pago no encontrado", request.paymentMethodId(), request.userId());
@@ -765,6 +770,7 @@ public class ApiController {
     if ("USD".equals(invoiceCurrency) && !("cuenta".equals(paymentType) || "tarjeta".equals(paymentType))) {
       throw new ApiException(HttpStatus.BAD_REQUEST, "Las subastas en dolares solo pueden pagarse con transferencia o tarjeta internacional.");
     }
+    ensurePaymentLimit(payment, (BigDecimal) invoice.get("total"), "pagar esta factura");
     jdbc.update("""
         UPDATE facturas_compra
         SET medio_pago=?, estado='pagada', pagado_en=CURRENT_TIMESTAMP
@@ -1062,6 +1068,17 @@ public class ApiController {
         WHERE subasta=? AND activa='si'
         """, Integer.class, subastaId);
     return count == null ? 0 : count;
+  }
+
+  private void ensurePaymentLimit(Map<String, Object> payment, BigDecimal requiredAmount, String operation) {
+    if (!"cheque".equals(Objects.toString(payment.get("tipo"), "").toLowerCase())) return;
+    if (requiredAmount == null) return;
+    Object rawLimit = payment.get("monto_reservado");
+    if (!(rawLimit instanceof BigDecimal limit) || limit.compareTo(requiredAmount) < 0) {
+      throw new ApiException(HttpStatus.BAD_REQUEST,
+          "El cheque certificado no alcanza para " + operation + ". Limite disponible: " +
+              Objects.toString(rawLimit, "0") + ". Monto requerido: " + requiredAmount + ".");
+    }
   }
 
   private Map<String, Object> one(String sql, String notFoundMessage, Object... args) {
