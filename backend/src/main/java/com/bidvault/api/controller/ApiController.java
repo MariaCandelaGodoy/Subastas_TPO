@@ -171,7 +171,21 @@ public class ApiController {
                  WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
                  ELSE 'programada'
                END estado,
-               MIN(i.precioBase) precio_desde, sp.imagen imagen_portada,
+               MIN(i.precioBase) precio_desde,
+               COALESCE(
+               CASE
+                 WHEN sp.imagen IS NULL THEN NULL
+                 WHEN sp.imagen LIKE 'data:image/%' OR sp.imagen LIKE 'http://%' OR sp.imagen LIKE 'https://%' THEN sp.imagen
+                 ELSE CONCAT('data:', COALESCE(sp.mime_type, 'image/jpeg'), ';base64,', sp.imagen)
+               END, (
+                 SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto))
+                 FROM catalogos c2
+                 JOIN itemsCatalogo i2 ON i2.catalogo = c2.identificador
+                 JOIN fotos f ON f.producto = i2.producto
+                 WHERE c2.subasta = s.identificador
+                 ORDER BY i2.identificador, f.identificador
+                 LIMIT 1
+               )) imagen_portada,
                COALESCE(sc.moneda, 'ARS') moneda,
                COALESCE(sc.duracion_minutos, 90) duracion_minutos,
                GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) tiempo_restante_segundos,
@@ -192,7 +206,7 @@ public class ApiController {
                    WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
                    ELSE 'programada'
                  END,
-                 s.categoria, s.ubicacion, sp.imagen, sc.moneda, sc.duracion_minutos
+                 s.categoria, s.ubicacion, sp.imagen, sp.mime_type, sc.moneda, sc.duracion_minutos
         ORDER BY s.fecha, s.hora
         """;
     return jdbc.queryForList(sql, clienteId, q, q);
@@ -209,7 +223,20 @@ public class ApiController {
                  ELSE 'programada'
                END estado,
                s.categoria, s.ubicacion, s.capacidadAsistentes, s.tieneDeposito, s.seguridadPropia,
-               sp.imagen imagen_portada,
+               COALESCE(
+               CASE
+                 WHEN sp.imagen IS NULL THEN NULL
+                 WHEN sp.imagen LIKE 'data:image/%' OR sp.imagen LIKE 'http://%' OR sp.imagen LIKE 'https://%' THEN sp.imagen
+                 ELSE CONCAT('data:', COALESCE(sp.mime_type, 'image/jpeg'), ';base64,', sp.imagen)
+               END, (
+                 SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto))
+                 FROM catalogos c2
+                 JOIN itemsCatalogo i2 ON i2.catalogo = c2.identificador
+                 JOIN fotos f ON f.producto = i2.producto
+                 WHERE c2.subasta = s.identificador
+                 ORDER BY i2.identificador, f.identificador
+                 LIMIT 1
+               )) imagen_portada,
                COALESCE(sc.moneda, 'ARS') moneda,
                COALESCE(sc.duracion_minutos, 90) duracion_minutos,
                GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) tiempo_restante_segundos,
@@ -240,12 +267,7 @@ public class ApiController {
         """, rows.get(0).get("catalogo_id"));
     for (var item : items) {
       var productId = ((Number) item.get("producto_id")).intValue();
-      var images = jdbc.queryForList("""
-          SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(foto)) url
-          FROM fotos
-          WHERE producto=?
-          ORDER BY identificador
-          """, String.class, productId);
+      var images = productImages(productId);
       item.put("imagenes", images);
       if (!images.isEmpty()) item.put("imagen", images.get(0));
     }
@@ -835,18 +857,31 @@ public class ApiController {
   @GetMapping("/my-pieces/{duenioId}")
   List<Map<String, Object>> myPieces(@PathVariable int duenioId) {
     ensureUserNotBlocked(duenioId);
+    ensureProductReviewTable();
     return jdbc.queryForList("""
         SELECT sp.identificador id, sp.titulo, sp.descripcion, sp.estado, sp.motivo_rechazo,
                sp.deposito, sp.seguro, sp.creado_en,
                spe.identificador propuesta_id, spe.fecha_subasta, spe.hora_subasta, spe.ubicacion propuesta_ubicacion,
                spe.precio_base propuesta_precio_base, spe.moneda propuesta_moneda, spe.comision propuesta_comision,
                spe.poliza_compania, spe.poliza_numero, spe.poliza_cobertura, spe.estado propuesta_estado,
-               (SELECT sf.url
-                FROM solicitudes_fotos sf
-                WHERE sf.solicitud=sp.identificador
-                  AND (sf.url LIKE 'data:image/%' OR sf.url LIKE 'http://%' OR sf.url LIKE 'https://%')
-                ORDER BY sf.identificador
-                LIMIT 1) foto
+               COALESCE(
+                 (SELECT CASE
+                    WHEN sf.url LIKE 'data:image/%' OR sf.url LIKE 'http://%' OR sf.url LIKE 'https://%' THEN sf.url
+                    ELSE CONCAT('data:image/jpeg;base64,', sf.url)
+                  END
+                  FROM solicitudes_fotos sf
+                  WHERE sf.solicitud=sp.identificador
+                    AND sf.url IS NOT NULL
+                    AND sf.url <> ''
+                  ORDER BY sf.identificador
+                  LIMIT 1),
+                 (SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(f.foto))
+                  FROM solicitudes_productos_revision spr
+                  JOIN fotos f ON f.producto = spr.producto
+                  WHERE spr.solicitud = sp.identificador
+                  ORDER BY f.identificador
+                  LIMIT 1)
+               ) foto
         FROM solicitudes_productos sp
         LEFT JOIN solicitudes_propuestas_empresa spe ON spe.solicitud=sp.identificador AND spe.estado='pendiente_usuario'
         WHERE sp.duenio=?
@@ -1150,6 +1185,36 @@ public class ApiController {
     };
   }
 
+  private List<String> productImages(int productId) {
+    var images = jdbc.queryForList("""
+        SELECT CONCAT('data:image/jpeg;base64,', TO_BASE64(foto)) url
+        FROM fotos
+        WHERE producto=?
+        ORDER BY identificador
+        """, String.class, productId);
+    if (!images.isEmpty() || !tableExists("solicitudes_productos_revision")) {
+      return images;
+    }
+    return jdbc.queryForList("""
+        SELECT sf.url
+        FROM solicitudes_productos_revision spr
+        JOIN solicitudes_fotos sf ON sf.solicitud = spr.solicitud
+        WHERE spr.producto=?
+          AND (sf.url LIKE 'data:image/%' OR sf.url LIKE 'http://%' OR sf.url LIKE 'https://%')
+        ORDER BY sf.identificador
+        """, String.class, productId);
+  }
+
+  private boolean tableExists(String tableName) {
+    Integer count = jdbc.queryForObject("""
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = ?
+        """, Integer.class, tableName);
+    return count != null && count > 0;
+  }
+
   private String temporaryPassword() {
     String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     StringBuilder value = new StringBuilder("BV-");
@@ -1173,6 +1238,31 @@ public class ApiController {
           CONSTRAINT pk_direcciones_entrega PRIMARY KEY (identificador),
           CONSTRAINT chk_dir_pred CHECK (predeterminada IN ('si','no')),
           CONSTRAINT fk_direcciones_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador)
+        )
+        """);
+  }
+
+  private void ensureProductReviewTable() {
+    jdbc.execute("""
+        CREATE TABLE IF NOT EXISTS solicitudes_productos_revision (
+          identificador INT NOT NULL AUTO_INCREMENT,
+          solicitud INT NOT NULL,
+          producto INT NULL,
+          subasta INT NULL,
+          catalogo INT NULL,
+          item INT NULL,
+          precio_base DECIMAL(18,2) NULL,
+          comision DECIMAL(18,2) NULL,
+          estado VARCHAR(30) NOT NULL DEFAULT 'propuesta_enviada',
+          observacion VARCHAR(500) NULL,
+          creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT pk_solicitudes_productos_revision PRIMARY KEY (identificador),
+          CONSTRAINT uq_solicitudes_productos_revision UNIQUE (solicitud),
+          CONSTRAINT fk_spr_solicitud FOREIGN KEY (solicitud) REFERENCES solicitudes_productos(identificador),
+          CONSTRAINT fk_spr_producto FOREIGN KEY (producto) REFERENCES productos(identificador),
+          CONSTRAINT fk_spr_subasta FOREIGN KEY (subasta) REFERENCES subastas(identificador),
+          CONSTRAINT fk_spr_catalogo FOREIGN KEY (catalogo) REFERENCES catalogos(identificador),
+          CONSTRAINT fk_spr_item FOREIGN KEY (item) REFERENCES itemsCatalogo(identificador)
         )
         """);
   }
