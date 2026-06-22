@@ -33,9 +33,6 @@ public class ApiController {
   private static final Pattern NAME_PATTERN = Pattern.compile("^[\\p{L}]+(?:[ '\\-][\\p{L}]+)*$");
   private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$", Pattern.CASE_INSENSITIVE);
 
-  private boolean mailenabled = true;
-
-
   public ApiController(JdbcTemplate jdbc, PasswordEncoder encoder, EmailService emailService, AuctionRealtimeHub realtimeHub) {
     this.jdbc = jdbc;
     this.encoder = encoder;
@@ -103,7 +100,7 @@ public class ApiController {
         SET password_hash=?, password_temporal='si'
         WHERE identificador=?
         """, encoder.encode(temporaryPassword), user.get("usuario_id"));
-    emailService.sendTemporaryPassword(email, Objects.toString(user.get("nombre"), "Usuario"), temporaryPassword);
+    sendTemporaryPasswordOrFail(email, Objects.toString(user.get("nombre"), "Usuario"), temporaryPassword);
     return Map.of("enviado", true);
   }
 
@@ -154,12 +151,7 @@ public class ApiController {
         VALUES (?, 'DNI', ?, ?, 'aprobada_simulada', 'Validacion simulada desde el registro')
         """, personaId, decodeBase64Image(request.dniFrenteBase64()), decodeBase64Image(request.dniDorsoBase64()));
 
-    if (mailenabled){
-        emailService.sendTemporaryPassword(email, request.nombre() + " " + request.apellido(), temporaryPassword);
-    }
-    
-
-
+    sendTemporaryPasswordOrFail(email, request.nombre() + " " + request.apellido(), temporaryPassword);
     return Map.of("persona_id", personaId, "estado", "pendiente_validacion");
   }
 
@@ -1232,6 +1224,14 @@ public class ApiController {
       value.append(alphabet.charAt(RANDOM.nextInt(alphabet.length())));
     }
     return value.toString();
+  }
+
+  private void sendTemporaryPasswordOrFail(String email, String fullName, String temporaryPassword) {
+    try {
+      emailService.sendTemporaryPassword(email, fullName, temporaryPassword);
+    } catch (RuntimeException ex) {
+      throw new ApiException(HttpStatus.BAD_GATEWAY, "No se pudo enviar el mail. Revisá la configuración SMTP del backend.");
+    }
   }
 
   private void ensureAddressTable() {

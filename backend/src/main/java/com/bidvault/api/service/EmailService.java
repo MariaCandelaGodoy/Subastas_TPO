@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
-import java.util.concurrent.CompletableFuture;
 
 @Service
 public class EmailService {
@@ -27,18 +26,14 @@ public class EmailService {
   public void sendTemporaryPassword(String to, String fullName, String temporaryPassword) {
     if (!enabled) {
       log.warn("MAIL DESHABILITADO. Password temporal para {} <{}>: {}", fullName, to, temporaryPassword);
-      return;
+      throw new IllegalStateException("El envio de mails esta deshabilitado");
     }
 
-    CompletableFuture.runAsync(() -> sendTemporaryPasswordNow(to, fullName, temporaryPassword));
-  }
-
-  private void sendTemporaryPasswordNow(String to, String fullName, String temporaryPassword) {
     try {
       JavaMailSender sender = mailSender.getIfAvailable();
       if (sender == null) {
         log.warn("No hay JavaMailSender configurado. Password temporal para {} <{}>: {}", fullName, to, temporaryPassword);
-        return;
+        throw new IllegalStateException("No hay servidor de mail configurado");
       }
 
       SimpleMailMessage message = new SimpleMailMessage();
@@ -59,10 +54,9 @@ public class EmailService {
           """.formatted(fullName, temporaryPassword));
       sender.send(message);
       log.info("Password temporal enviada a {}", to);
-      System.out.println( "Password temporal enviada a " + to);
     } catch (Exception ex) {
       log.error("No se pudo enviar el mail a {}. Password temporal de contingencia: {}", to, temporaryPassword, ex);
-      System.out.println(ex);
+      throw new IllegalStateException("No se pudo enviar el mail", ex);
     }
   }
 }
