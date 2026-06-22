@@ -519,6 +519,8 @@ function AuctionDetailScreen({
 }) {
   const [detail, setDetail] = useState<AuctionDetail | null>(null);
   const [favorite, setFavorite] = useState(false);
+  const [catalogFilter, setCatalogFilter] = useState<'TODOS' | 'DISPONIBLES' | 'SUBASTADOS'>('TODOS');
+  const [catalogAscending, setCatalogAscending] = useState(true);
 
   useEffect(() => {
     api.auction(auctionId, session?.userId).then((data) => {
@@ -532,6 +534,16 @@ function AuctionDetailScreen({
   }
 
   const cover = imageSource(detail.auction.imagenPortada);
+  const filteredProducts = detail.products
+    .filter((product) => {
+      if (catalogFilter === 'DISPONIBLES') return !product.vendido;
+      if (catalogFilter === 'SUBASTADOS') return product.vendido;
+      return true;
+    })
+    .sort((a, b) => catalogAscending ? a.precioBase - b.precioBase : b.precioBase - a.precioBase);
+  const cycleCatalogFilter = () => {
+    setCatalogFilter((current) => current === 'TODOS' ? 'DISPONIBLES' : current === 'DISPONIBLES' ? 'SUBASTADOS' : 'TODOS');
+  };
   const toggleFavorite = async () => {
     if (!session) return Alert.alert('Inicie sesión', 'Necesitás iniciar sesión para agregar favoritos.');
     const next = !favorite;
@@ -575,13 +587,22 @@ function AuctionDetailScreen({
             <Text style={styles.favoriteWideText}>{favorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}</Text>
           </Pressable>
           <View style={styles.catalogToolRow}>
-            <Text style={styles.catalogTool}><Ionicons name="filter" size={14} /> Filtrar</Text>
-            <Text style={styles.catalogTool}><Ionicons name="swap-vertical" size={14} /> Ordenar</Text>
+            <Pressable onPress={cycleCatalogFilter} style={[styles.catalogTool, catalogFilter !== 'TODOS' && styles.catalogToolActive]}>
+              <Text style={[styles.catalogToolText, catalogFilter !== 'TODOS' && styles.catalogToolTextActive]}>
+                <Ionicons name="filter" size={14} /> {catalogFilter === 'TODOS' ? 'Filtrar' : catalogFilter === 'DISPONIBLES' ? 'Disponibles' : 'Subastados'}
+              </Text>
+            </Pressable>
+            <Pressable onPress={() => setCatalogAscending((value) => !value)} style={styles.catalogTool}>
+              <Text style={styles.catalogToolText}>
+                <Ionicons name="swap-vertical" size={14} /> {catalogAscending ? 'Menor precio' : 'Mayor precio'}
+              </Text>
+            </Pressable>
           </View>
         </View>
       </View>
       <View style={styles.catalogBand}>
-        {detail.products.map((product) => <CatalogProductCard key={product.id} product={product} moneda={detail.auction.moneda} showPrices={Boolean(session)} onPress={() => onProduct(product, detail.auction.moneda)} />)}
+        {filteredProducts.map((product) => <CatalogProductCard key={product.id} product={product} moneda={detail.auction.moneda} showPrices={Boolean(session)} onPress={() => onProduct(product, detail.auction.moneda)} />)}
+        {filteredProducts.length === 0 ? <Text style={styles.emptyText}>No hay piezas con ese filtro.</Text> : null}
       </View>
     </Screen>
   );
@@ -2062,7 +2083,10 @@ const styles = StyleSheet.create({
   favoriteWide: { backgroundColor: '#E4A3AD', borderRadius: 7, minHeight: 38, alignItems: 'center', justifyContent: 'center' },
   favoriteWideText: { color: colors.burgundy, fontSize: 15, fontWeight: '800' },
   catalogToolRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-  catalogTool: { flex: 1, backgroundColor: '#D2CAB7', color: '#6D6154', borderRadius: 8, paddingVertical: 9, textAlign: 'center', fontSize: 16, fontWeight: '700' },
+  catalogTool: { flex: 1, backgroundColor: '#D2CAB7', borderRadius: 8, paddingVertical: 9, alignItems: 'center', justifyContent: 'center' },
+  catalogToolActive: { backgroundColor: colors.burgundy },
+  catalogToolText: { color: '#6D6154', textAlign: 'center', fontSize: 16, fontWeight: '700' },
+  catalogToolTextActive: { color: colors.cream },
   catalogBand: { gap: 18, paddingBottom: 18 },
   catalogProductCard: { backgroundColor: colors.cream, borderRadius: 8, padding: 12, overflow: 'hidden', ...shadow },
   catalogProductImage: { width: '100%', height: 190, borderRadius: 7, marginBottom: 14, backgroundColor: colors.linen },
