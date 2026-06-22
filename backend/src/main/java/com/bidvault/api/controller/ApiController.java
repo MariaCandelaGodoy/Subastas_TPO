@@ -33,6 +33,9 @@ public class ApiController {
   private static final Pattern NAME_PATTERN = Pattern.compile("^[\\p{L}]+(?:[ '\\-][\\p{L}]+)*$");
   private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$", Pattern.CASE_INSENSITIVE);
 
+  private boolean mailenabled = true;
+
+
   public ApiController(JdbcTemplate jdbc, PasswordEncoder encoder, EmailService emailService, AuctionRealtimeHub realtimeHub) {
     this.jdbc = jdbc;
     this.encoder = encoder;
@@ -42,7 +45,7 @@ public class ApiController {
 
   @GetMapping("/health")
   Map<String, Object> health() {
-    return Map.of("status", "ok", "database", "bidvault");
+    return Map.of("status", "200: ok", "database", "bidvault");
   }
 
   @PostMapping("/auth/login")
@@ -134,7 +137,7 @@ public class ApiController {
         VALUES (?, ?, 'no', 'comun', 1)
         """, personaId, numeroPais);
     jdbc.update("""
-        INSERT INTO duenios (identificador, numeroPais, `verificaciÃƒÆ’Ã‚Â³nFinanciera`, `verificaciÃƒÆ’Ã‚Â³nJudicial`, calificacionRiesgo, verificador)
+        INSERT INTO duenios (identificador, numeroPais, `verificacionFinanciera`, `verificacionJudicial`, calificacionRiesgo, verificador)
         VALUES (?, ?, 'no', 'no', 6, 1)
         """, personaId, numeroPais);
     String temporaryPassword = temporaryPassword();
@@ -150,6 +153,13 @@ public class ApiController {
         INSERT INTO documentos_verificacion (persona, tipo_documento, frente, dorso, estado, observacion)
         VALUES (?, 'DNI', ?, ?, 'aprobada_simulada', 'Validacion simulada desde el registro')
         """, personaId, decodeBase64Image(request.dniFrenteBase64()), decodeBase64Image(request.dniDorsoBase64()));
+
+    if (mailenabled){
+        emailService.sendTemporaryPassword(email, request.nombre() + " " + request.apellido(), temporaryPassword);
+    }
+    
+
+
     return Map.of("persona_id", personaId, "estado", "pendiente_validacion");
   }
 

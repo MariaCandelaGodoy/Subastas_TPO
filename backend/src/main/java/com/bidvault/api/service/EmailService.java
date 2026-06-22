@@ -59,8 +59,10 @@ public class EmailService {
           """.formatted(fullName, temporaryPassword));
       sender.send(message);
       log.info("Password temporal enviada a {}", to);
+      System.out.println( "Password temporal enviada a " + to);
     } catch (Exception ex) {
       log.error("No se pudo enviar el mail a {}. Password temporal de contingencia: {}", to, temporaryPassword, ex);
+      System.out.println(ex);
     }
   }
 }
