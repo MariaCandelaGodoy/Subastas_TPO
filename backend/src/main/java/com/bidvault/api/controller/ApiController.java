@@ -116,15 +116,15 @@ public class ApiController {
     require(request.direccion(), "El domicilio es obligatorio");
     require(request.dniFrenteBase64(), "La foto del frente del DNI es obligatoria");
     require(request.dniDorsoBase64(), "La foto del dorso del DNI es obligatoria");
-    validateName(request.nombre(), "El nombre no puede contener nÃƒÆ’Ã‚Âºmeros ni caracteres invÃƒÆ’Ã‚Â¡lidos");
-    validateName(request.apellido(), "El apellido no puede contener nÃƒÆ’Ã‚Âºmeros ni caracteres invÃƒÆ’Ã‚Â¡lidos");
+    validateName(request.nombre(), "El nombre no puede contener números ni caracteres inválidos");
+    validateName(request.apellido(), "El apellido no puede contener números ni caracteres inválidos");
     validateEmail(request.email());
     if (!request.documento().trim().matches("\\d+")) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, "El DNI debe contener solo nÃƒÆ’Ã‚Âºmeros");
+      throw new ApiException(HttpStatus.BAD_REQUEST, "El DNI debe contener solo números");
     }
     String email = request.email().trim().toLowerCase();
     if (!jdbc.queryForList("SELECT identificador FROM usuarios_app WHERE email=?", email).isEmpty()) {
-      throw new ApiException(HttpStatus.CONFLICT, "Ya existe una cuenta registrada con ese correo electrÃƒÆ’Ã‚Â³nico.");
+      throw new ApiException(HttpStatus.CONFLICT, "Ya existe una cuenta registrada con ese correo electrónico.");
     }
     int numeroPais = resolveCountry(request.pais(), request.numeroPais());
 
@@ -146,7 +146,7 @@ public class ApiController {
         """, personaId, email, encoder.encode(temporaryPassword));
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
-        VALUES (?, 'Registrado', 'Su registro fue recibido. Le enviaremos un correo cuando la validaciÃƒÆ’Ã‚Â³n se complete.', 'importante')
+        VALUES (?, 'Registrado', 'Su registro fue recibido. Le enviaremos un correo cuando la validación se complete.', 'importante')
         """, personaId);
     jdbc.update("""
         INSERT INTO documentos_verificacion (persona, tipo_documento, frente, dorso, estado, observacion)
@@ -323,7 +323,7 @@ public class ApiController {
         LIMIT 1
         """, request.clienteId());
     if (!activeSessions.isEmpty() && ((Number) activeSessions.get(0).get("subasta")).intValue() != id) {
-      throw new ApiException(HttpStatus.CONFLICT, "Ya estÃƒÆ’Ã‚Â¡s conectado a otra subasta. SalÃƒÆ’Ã‚Â­ de esa sala antes de ingresar a una nueva.");
+      throw new ApiException(HttpStatus.CONFLICT, "Ya estás conectado a otra subasta. Salí de esa sala antes de ingresar a una nueva.");
     }
     var payment = one("""
         SELECT m.identificador, m.verificado, m.moneda, m.tipo, m.monto_reservado,
@@ -381,7 +381,7 @@ public class ApiController {
         WHERE i.identificador = ?
         GROUP BY i.identificador, i.precioBase, i.comision, c.subasta, s.categoria, ise.estado, ise.cierra_en
         FOR UPDATE
-        """, "ÃƒÆ’Ã‚Âtem no encontrado", request.itemId());
+        """, "Ítem no encontrado", request.itemId());
     int subastaId = ((Number) data.get("subasta")).intValue();
     ensureLiveItem(subastaId);
     ensureCanParticipate(request.clienteId(), subastaId, false);
@@ -395,9 +395,9 @@ public class ApiController {
     String category = data.get("subasta_categoria").toString();
     BigDecimal min = current.add(base.multiply(new BigDecimal("0.01"))).setScale(2, RoundingMode.HALF_UP);
     BigDecimal max = current.add(base.multiply(new BigDecimal("0.20"))).setScale(2, RoundingMode.HALF_UP);
-    if (amount.compareTo(min) < 0) throw new ApiException(HttpStatus.BAD_REQUEST, "La puja mÃƒÆ’Ã‚Â­nima es " + min);
+    if (amount.compareTo(min) < 0) throw new ApiException(HttpStatus.BAD_REQUEST, "La puja mínima es " + min);
     if (!category.equals("oro") && !category.equals("platino") && amount.compareTo(max) > 0) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, "La puja mÃƒÆ’Ã‚Â¡xima para esta categorÃƒÆ’Ã‚Â­a es " + max);
+      throw new ApiException(HttpStatus.BAD_REQUEST, "La puja máxima para esta categoría es " + max);
     }
     int asistenteId = ensureAssistant(request.clienteId(), subastaId);
     jdbc.update("UPDATE pujos SET ganador='no' WHERE item=?", request.itemId());
@@ -484,7 +484,7 @@ public class ApiController {
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         VALUES (?, 'Ganaste la subasta', ?, 'importante')
-        """, w.get("cliente"), "Importe: " + importe + ". ComisiÃƒÆ’Ã‚Â³n: " + comision + ". CoordinÃƒÆ’Ã‚Â¡ envÃƒÆ’Ã‚Â­o o retiro.");
+        """, w.get("cliente"), "Importe: " + importe + ". Comisión: " + comision + ". Coordiná envío o retiro.");
     return Map.of("registro_id", registro, "importe", importe, "comision", comision, "empresa_compra", empresaCompra);
   }
 
@@ -535,7 +535,7 @@ public class ApiController {
     }
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
-        VALUES (?, 'Producto enviado a revisiÃƒÆ’Ã‚Â³n', 'Recibimos tu solicitud y la empresa revisarÃƒÆ’Ã‚Â¡ el bien.', 'importante')
+        VALUES (?, 'Producto enviado a revisión', 'Recibimos tu solicitud y la empresa revisará el bien.', 'importante')
         """, request.duenioId());
     return Map.of("solicitud_id", id, "estado", "pendiente");
   }
@@ -607,14 +607,14 @@ public class ApiController {
     require(request.apellido(), "El apellido es obligatorio");
     require(request.email(), "El email es obligatorio");
     require(request.direccion(), "El domicilio es obligatorio");
-    require(request.pais(), "El paÃƒÆ’Ã‚Â­s es obligatorio");
-    validateName(request.nombre(), "El nombre no puede contener nÃƒÆ’Ã‚Âºmeros ni caracteres invÃƒÆ’Ã‚Â¡lidos");
-    validateName(request.apellido(), "El apellido no puede contener nÃƒÆ’Ã‚Âºmeros ni caracteres invÃƒÆ’Ã‚Â¡lidos");
+    require(request.pais(), "El país es obligatorio");
+    validateName(request.nombre(), "El nombre no puede contener números ni caracteres inválidos");
+    validateName(request.apellido(), "El apellido no puede contener números ni caracteres inválidos");
     validateEmail(request.email());
     int numeroPais = resolveCountry(request.pais(), null);
     String email = request.email().trim().toLowerCase();
     if (!jdbc.queryForList("SELECT identificador FROM usuarios_app WHERE email=? AND persona<>?", email, clienteId).isEmpty()) {
-      throw new ApiException(HttpStatus.CONFLICT, "Ya existe una cuenta registrada con ese correo electrÃƒÆ’Ã‚Â³nico.");
+      throw new ApiException(HttpStatus.CONFLICT, "Ya existe una cuenta registrada con ese correo electrónico.");
     }
 
     String fullName = request.nombre().trim() + " " + request.apellido().trim();
@@ -648,7 +648,7 @@ public class ApiController {
   @PutMapping("/profile/{clienteId}/password")
   @Transactional
   Map<String, Object> updatePassword(@PathVariable int clienteId, @RequestBody UpdatePasswordRequest request) {
-    require(request.password(), "La nueva contraseÃƒÆ’Ã‚Â±a es obligatoria");
+    require(request.password(), "La nueva contraseña es obligatoria");
     ensureUserNotBlocked(clienteId);
     jdbc.update("UPDATE usuarios_app SET password_hash=?, password_temporal='no' WHERE persona=?",
         encoder.encode(request.password()), clienteId);
@@ -760,7 +760,7 @@ public class ApiController {
         SELECT direccion, ciudad, pais
         FROM direcciones_entrega
         WHERE identificador=? AND cliente=?
-        """, "DirecciÃƒÆ’Ã‚Â³n no encontrada", request.addressId(), request.userId());
+        """, "Dirección no encontrada", request.addressId(), request.userId());
     var pending = jdbc.queryForList("""
         SELECT r.identificador
         FROM registroDeSubasta r
@@ -770,7 +770,7 @@ public class ApiController {
         LIMIT 1
         """, request.userId());
     if (pending.isEmpty()) {
-      throw new ApiException(HttpStatus.NOT_FOUND, "No hay compras pendientes de envÃƒÆ’Ã‚Â­o");
+      throw new ApiException(HttpStatus.NOT_FOUND, "No hay compras pendientes de envío");
     }
     String fullAddress = address.get("direccion") + ", " + address.get("ciudad") + ", " + address.get("pais");
     String tracking = "BV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
@@ -871,7 +871,7 @@ public class ApiController {
         blankDefault(request.ciudad(), "Buenos Aires"), blankDefault(request.pais(), "Argentina"),
         blankDefault(request.predeterminada(), "si"));
     return one("SELECT identificador id, titulo, direccion, ciudad, pais, predeterminada FROM direcciones_entrega WHERE identificador=?",
-        "DirecciÃƒÆ’Ã‚Â³n no encontrada", id);
+        "Dirección no encontrada", id);
   }
 
   @PutMapping("/shipping/addresses/{id}")
@@ -891,7 +891,7 @@ public class ApiController {
         """, request.titulo(), request.direccion(), blankDefault(request.ciudad(), "Buenos Aires"),
         blankDefault(request.pais(), "Argentina"), blankDefault(request.predeterminada(), "no"), id, request.userId());
     return one("SELECT identificador id, titulo, direccion, ciudad, pais, predeterminada FROM direcciones_entrega WHERE identificador=?",
-        "DirecciÃƒÆ’Ã‚Â³n no encontrada", id);
+        "Dirección no encontrada", id);
   }
 
   @GetMapping("/my-pieces/{duenioId}")
@@ -1300,7 +1300,7 @@ public class ApiController {
 
   private void validateEmail(String value) {
     if (!EMAIL_PATTERN.matcher(value.trim()).matches()) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, "El correo electrÃƒÆ’Ã‚Â³nico no tiene un formato vÃƒÆ’Ã‚Â¡lido");
+      throw new ApiException(HttpStatus.BAD_REQUEST, "El correo electrónico no tiene un formato válido");
     }
   }
 
@@ -1309,13 +1309,13 @@ public class ApiController {
       var byNumber = jdbc.queryForList("SELECT numero FROM paises WHERE numero=?", numeroPais);
       if (!byNumber.isEmpty()) return numeroPais;
     }
-    require(pais, "El paÃƒÆ’Ã‚Â­s es obligatorio");
+    require(pais, "El país es obligatorio");
     var rows = jdbc.queryForList("""
         SELECT numero
         FROM paises
         WHERE LOWER(nombre)=LOWER(?) OR LOWER(nombreCorto)=LOWER(?)
         """, pais.trim(), pais.trim());
-    if (rows.isEmpty()) throw new ApiException(HttpStatus.BAD_REQUEST, "El paÃƒÆ’Ã‚Â­s ingresado no es vÃƒÆ’Ã‚Â¡lido");
+    if (rows.isEmpty()) throw new ApiException(HttpStatus.BAD_REQUEST, "El país ingresado no es válido");
     return ((Number) rows.get(0).get("numero")).intValue();
   }
 
