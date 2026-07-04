@@ -18,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -32,6 +33,7 @@ public class ApiController {
   private static final SecureRandom RANDOM = new SecureRandom();
   private static final Pattern NAME_PATTERN = Pattern.compile("^[\\p{L}]+(?:[ '\\-][\\p{L}]+)*$");
   private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$", Pattern.CASE_INSENSITIVE);
+  private volatile boolean itemStateTableReady = false;
 
   public ApiController(JdbcTemplate jdbc, PasswordEncoder encoder, EmailService emailService, AuctionRealtimeHub realtimeHub) {
     this.jdbc = jdbc;
@@ -256,6 +258,9 @@ public class ApiController {
     var items = jdbc.queryForList("""
         SELECT i.identificador item_id, pr.identificador producto_id, pr.descripcionCatalogo descripcion,
                pr.descripcionCompleta pdf, pr.disponible, i.precioBase, i.comision, i.subastado,
+               COALESCE(ise.estado, CASE WHEN i.subastado='si' THEN 'cerrado' ELSE 'en_espera' END) item_estado,
+               COALESCE(GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), ise.cierra_en)), 0) item_tiempo_restante_segundos,
+               ise.cierra_en,
                pe.nombre duenio_nombre,
                COALESCE(MAX(pu.importe), i.precioBase) mejor_oferta,
                (SELECT pe.nombre FROM pujos p2 JOIN asistentes a2 ON a2.identificador=p2.asistente JOIN personas pe ON pe.identificador=a2.cliente
@@ -263,9 +268,11 @@ public class ApiController {
         FROM itemsCatalogo i
         JOIN productos pr ON pr.identificador = i.producto
         JOIN personas pe ON pe.identificador = pr.duenio
+        LEFT JOIN items_subasta_estado ise ON ise.item = i.identificador
         LEFT JOIN pujos pu ON pu.item = i.identificador
         WHERE i.catalogo = ?
-        GROUP BY i.identificador, pr.identificador, pr.descripcionCatalogo, pr.descripcionCompleta, pr.disponible, i.precioBase, i.comision, i.subastado, pe.nombre
+        GROUP BY i.identificador, pr.identificador, pr.descripcionCatalogo, pr.descripcionCompleta, pr.disponible,
+                 i.precioBase, i.comision, i.subastado, ise.estado, ise.cierra_en, pe.nombre
         """, rows.get(0).get("catalogo_id"));
     for (var item : items) {
       var productId = ((Number) item.get("producto_id")).intValue();
@@ -297,6 +304,7 @@ public class ApiController {
   @Transactional
   Map<String, Object> joinAuction(@PathVariable int id, @RequestBody JoinAuctionRequest request) {
     ensureCanParticipate(request.clienteId(), id, false);
+    ensureLiveItem(id);
     jdbc.update("""
         UPDATE sesiones_subasta ss
         JOIN subastas s ON s.identificador=ss.subasta
@@ -362,18 +370,25 @@ public class ApiController {
     requirePositive(request.importe(), "El importe debe ser mayor a cero");
     var data = one("""
         SELECT i.identificador item_id, i.precioBase, i.comision, c.subasta, s.categoria subasta_categoria,
+               COALESCE(ise.estado, CASE WHEN i.subastado='si' THEN 'cerrado' ELSE 'en_espera' END) item_estado,
+               COALESCE(GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), ise.cierra_en)), 0) item_tiempo_restante_segundos,
                COALESCE(MAX(pu.importe), i.precioBase) mejor_oferta
         FROM itemsCatalogo i
         JOIN catalogos c ON c.identificador = i.catalogo
         JOIN subastas s ON s.identificador = c.subasta
+        LEFT JOIN items_subasta_estado ise ON ise.item = i.identificador
         LEFT JOIN pujos pu ON pu.item = i.identificador
         WHERE i.identificador = ?
-        GROUP BY i.identificador, i.precioBase, i.comision, c.subasta, s.categoria
+        GROUP BY i.identificador, i.precioBase, i.comision, c.subasta, s.categoria, ise.estado, ise.cierra_en
         FOR UPDATE
         """, "ÃƒÆ’Ã‚Âtem no encontrado", request.itemId());
     int subastaId = ((Number) data.get("subasta")).intValue();
+    ensureLiveItem(subastaId);
     ensureCanParticipate(request.clienteId(), subastaId, false);
     ensureAuctionGuarantee(request.clienteId(), subastaId);
+    if (!"en_vivo".equals(data.get("item_estado")) || ((Number) data.get("item_tiempo_restante_segundos")).intValue() <= 0) {
+      throw new ApiException(HttpStatus.CONFLICT, "Este item no esta en vivo para recibir pujas.");
+    }
     BigDecimal base = (BigDecimal) data.get("precioBase");
     BigDecimal current = (BigDecimal) data.get("mejor_oferta");
     BigDecimal amount = request.importe().setScale(2, RoundingMode.HALF_UP);
@@ -388,6 +403,12 @@ public class ApiController {
     jdbc.update("UPDATE pujos SET ganador='no' WHERE item=?", request.itemId());
     int bidId = insertAndReturnKey("INSERT INTO pujos (asistente, item, importe, ganador) VALUES (?, ?, ?, 'si')",
         asistenteId, request.itemId(), amount);
+    jdbc.update("""
+        UPDATE items_subasta_estado
+        SET cierra_en=DATE_ADD(NOW(), INTERVAL extension_segundos SECOND), actualizado_en=CURRENT_TIMESTAMP
+        WHERE item=? AND estado='en_vivo'
+        """, request.itemId());
+    int remainingSeconds = itemRemainingSeconds(request.itemId());
     Map<String, Object> event = Map.of(
         "tipo", "NUEVA_PUJA",
         "subastaId", subastaId,
@@ -395,22 +416,34 @@ public class ApiController {
         "pujaId", bidId,
         "clienteId", request.clienteId(),
         "importe", amount,
+        "itemTiempoRestanteSegundos", remainingSeconds,
         "ganador", "si");
     realtimeHub.publish(subastaId, event);
-    return Map.of("puja_id", bidId, "item_id", request.itemId(), "importe", amount, "ganador", "si");
+    return Map.of("puja_id", bidId, "item_id", request.itemId(), "importe", amount, "ganador", "si",
+        "item_tiempo_restante_segundos", remainingSeconds);
   }
 
   @PostMapping("/auctions/{id}/close-item/{itemId}")
   @Transactional
   Map<String, Object> closeItem(@PathVariable int id, @PathVariable int itemId) {
+    Map<String, Object> result = closeItemSale(id, itemId);
+    realtimeHub.publish(id, Map.of("tipo", "ITEM_CERRADO", "subastaId", id, "itemId", itemId));
+    ensureLiveItem(id);
+    return result;
+  }
+
+  private Map<String, Object> closeItemSale(int id, int itemId) {
     var item = one("""
-        SELECT i.identificador item_id, i.precioBase, i.comision, pr.duenio, pr.identificador producto
+        SELECT i.identificador item_id, i.precioBase, i.comision, i.subastado, pr.duenio, pr.identificador producto
         FROM itemsCatalogo i
         JOIN catalogos c ON c.identificador=i.catalogo
         JOIN productos pr ON pr.identificador=i.producto
         WHERE i.identificador=? AND c.subasta=?
         FOR UPDATE
         """, "Item no encontrado", itemId, id);
+    if ("si".equals(item.get("subastado"))) {
+      return Map.of("item_id", itemId, "cerrado", true);
+    }
     var winner = jdbc.queryForList("""
         SELECT p.identificador puja_id, a.cliente, p.importe, pr.duenio, pr.identificador producto, i.comision
         FROM pujos p
@@ -436,6 +469,11 @@ public class ApiController {
         VALUES (?, ?, ?, ?, ?, ?)
         """, id, w.get("duenio"), w.get("producto"), w.get("cliente"), importe, comision);
     jdbc.update("UPDATE itemsCatalogo SET subastado='si' WHERE identificador=?", itemId);
+    jdbc.update("""
+        UPDATE items_subasta_estado
+        SET estado='cerrado', cerrado_en=NOW(), cierra_en=NULL, actualizado_en=CURRENT_TIMESTAMP
+        WHERE item=?
+        """, itemId);
     jdbc.update("UPDATE productos SET disponible='no' WHERE identificador=?", w.get("producto"));
     boolean empresaCompra = Boolean.TRUE.equals(w.get("empresa_compra"));
     if (empresaCompra) {
@@ -945,6 +983,31 @@ public class ApiController {
         "Solicitud no encontrada", solicitudId);
   }
 
+  @Scheduled(fixedDelay = 1000)
+  @Transactional
+  public void closeExpiredDynamicItems() {
+    ensureItemStateTable();
+    var rows = jdbc.queryForList("""
+        SELECT ise.item, ca.subasta
+        FROM items_subasta_estado ise
+        JOIN itemsCatalogo i ON i.identificador=ise.item
+        JOIN catalogos ca ON ca.identificador=i.catalogo
+        WHERE ise.estado='en_vivo'
+          AND ise.cierra_en IS NOT NULL
+          AND ise.cierra_en <= NOW()
+          AND i.subastado='no'
+        ORDER BY ise.cierra_en, ise.item
+        LIMIT 10
+        """);
+    for (var row : rows) {
+      int itemId = ((Number) row.get("item")).intValue();
+      int subastaId = ((Number) row.get("subasta")).intValue();
+      closeItemSale(subastaId, itemId);
+      realtimeHub.publish(subastaId, Map.of("tipo", "ITEM_CERRADO", "subastaId", subastaId, "itemId", itemId));
+      ensureLiveItem(subastaId);
+    }
+  }
+
   private void ensureCanParticipate(int clienteId, int subastaId, boolean requirePayment) {
     ensureUserNotBlocked(clienteId);
     var rows = jdbc.queryForList("""
@@ -1070,6 +1133,27 @@ public class ApiController {
         """);
   }
 
+  private void ensureItemStateTable() {
+    if (itemStateTableReady) return;
+    jdbc.execute("""
+        CREATE TABLE IF NOT EXISTS items_subasta_estado (
+          item INT NOT NULL,
+          estado VARCHAR(20) NOT NULL DEFAULT 'en_espera',
+          iniciado_en DATETIME NULL,
+          cierra_en DATETIME NULL,
+          cerrado_en DATETIME NULL,
+          extension_segundos INT NOT NULL DEFAULT 30,
+          creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          CONSTRAINT pk_items_subasta_estado PRIMARY KEY (item),
+          CONSTRAINT chk_items_subasta_estado CHECK (estado IN ('en_espera','en_vivo','cerrado')),
+          CONSTRAINT chk_items_subasta_extension CHECK (extension_segundos > 0),
+          CONSTRAINT fk_items_subasta_estado_item FOREIGN KEY (item) REFERENCES itemsCatalogo(identificador)
+        )
+        """);
+    itemStateTableReady = true;
+  }
+
   private int ensureCompanyBuyerClient() {
     var rows = jdbc.queryForList("""
         SELECT c.identificador
@@ -1096,6 +1180,65 @@ public class ApiController {
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         VALUES (?, ?, ?, 'importante')
         """, ownerId, title, body);
+  }
+
+  private void ensureLiveItem(int subastaId) {
+    ensureItemStateTable();
+    jdbc.update("""
+        INSERT INTO items_subasta_estado (item, estado, extension_segundos)
+        SELECT i.identificador,
+               CASE WHEN i.subastado='si' THEN 'cerrado' ELSE 'en_espera' END,
+               30
+        FROM itemsCatalogo i
+        JOIN catalogos c ON c.identificador=i.catalogo
+        WHERE c.subasta=?
+        ON DUPLICATE KEY UPDATE item=VALUES(item)
+        """, subastaId);
+    Integer live = jdbc.queryForObject("""
+        SELECT COUNT(*)
+        FROM items_subasta_estado ise
+        JOIN itemsCatalogo i ON i.identificador=ise.item
+        JOIN catalogos c ON c.identificador=i.catalogo
+        WHERE c.subasta=? AND ise.estado='en_vivo' AND ise.cierra_en > NOW() AND i.subastado='no'
+        """, Integer.class, subastaId);
+    if (live != null && live > 0) return;
+    Integer expiredLive = jdbc.queryForObject("""
+        SELECT COUNT(*)
+        FROM items_subasta_estado ise
+        JOIN itemsCatalogo i ON i.identificador=ise.item
+        JOIN catalogos c ON c.identificador=i.catalogo
+        WHERE c.subasta=? AND ise.estado='en_vivo' AND i.subastado='no'
+        """, Integer.class, subastaId);
+    if (expiredLive != null && expiredLive > 0) return;
+    var next = jdbc.queryForList("""
+        SELECT i.identificador item
+        FROM itemsCatalogo i
+        JOIN catalogos c ON c.identificador=i.catalogo
+        JOIN items_subasta_estado ise ON ise.item=i.identificador
+        WHERE c.subasta=? AND i.subastado='no' AND ise.estado='en_espera'
+        ORDER BY i.identificador
+        LIMIT 1
+        """, subastaId);
+    if (next.isEmpty()) return;
+    int itemId = ((Number) next.get(0).get("item")).intValue();
+    jdbc.update("""
+        UPDATE items_subasta_estado
+        SET estado='en_vivo', iniciado_en=COALESCE(iniciado_en, NOW()),
+            cierra_en=DATE_ADD(NOW(), INTERVAL extension_segundos SECOND),
+            actualizado_en=CURRENT_TIMESTAMP
+        WHERE item=?
+        """, itemId);
+    realtimeHub.publish(subastaId, Map.of("tipo", "ITEM_EN_VIVO", "subastaId", subastaId, "itemId", itemId,
+        "itemTiempoRestanteSegundos", itemRemainingSeconds(itemId)));
+  }
+
+  private int itemRemainingSeconds(int itemId) {
+    Integer seconds = jdbc.queryForObject("""
+        SELECT COALESCE(GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), cierra_en)), 0)
+        FROM items_subasta_estado
+        WHERE item=?
+        """, Integer.class, itemId);
+    return seconds == null ? 0 : seconds;
   }
 
   private int countActiveSpectators(int subastaId) {
