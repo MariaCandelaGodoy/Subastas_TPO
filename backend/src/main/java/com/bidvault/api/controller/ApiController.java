@@ -385,7 +385,7 @@ public class ApiController {
     int subastaId = ((Number) data.get("subasta")).intValue();
     ensureLiveItem(subastaId);
     ensureCanParticipate(request.clienteId(), subastaId, false);
-    ensureAuctionGuarantee(request.clienteId(), subastaId);
+    var guarantee = ensureAuctionGuarantee(request.clienteId(), subastaId);
     if (!"en_vivo".equals(data.get("item_estado")) || ((Number) data.get("item_tiempo_restante_segundos")).intValue() <= 0) {
       throw new ApiException(HttpStatus.CONFLICT, "Este item no esta en vivo para recibir pujas.");
     }
@@ -399,6 +399,7 @@ public class ApiController {
     if (!category.equals("oro") && !category.equals("platino") && amount.compareTo(max) > 0) {
       throw new ApiException(HttpStatus.BAD_REQUEST, "La puja máxima para esta categoría es " + max);
     }
+    ensurePaymentLimit(guarantee, amount, "realizar esta puja");
     int asistenteId = ensureAssistant(request.clienteId(), subastaId);
     jdbc.update("UPDATE pujos SET ganador='no' WHERE item=?", request.itemId());
     int bidId = insertAndReturnKey("INSERT INTO pujos (asistente, item, importe, ganador) VALUES (?, ?, ?, 'si')",
@@ -1042,16 +1043,18 @@ public class ApiController {
     return jdbc.queryForObject("SELECT identificador FROM asistentes WHERE cliente=? AND subasta=?", Integer.class, clienteId, subastaId);
   }
 
-  private void ensureAuctionGuarantee(int clienteId, int subastaId) {
+  private Map<String, Object> ensureAuctionGuarantee(int clienteId, int subastaId) {
     ensureAuctionGuaranteeTable();
     var rows = jdbc.queryForList("""
-        SELECT identificador
-        FROM garantias_subasta
-        WHERE cliente=? AND subasta=?
-        """, clienteId, subastaId);
+        SELECT g.identificador garantia_id, m.identificador, m.tipo, m.moneda, m.monto_reservado, m.verificado, m.activo
+        FROM garantias_subasta g
+        JOIN medios_pago m ON m.identificador=g.medio_pago
+        WHERE g.cliente=? AND g.subasta=? AND m.cliente=? AND m.activo='si' AND m.verificado='si'
+        """, clienteId, subastaId, clienteId);
     if (rows.isEmpty()) {
       throw new ApiException(HttpStatus.FORBIDDEN, "Debe seleccionar un medio de garantia para participar");
     }
+    return rows.get(0);
   }
 
   private void ensureInvoiceForShipment(int registroId, int envioId) {
