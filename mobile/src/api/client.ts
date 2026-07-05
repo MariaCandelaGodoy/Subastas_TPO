@@ -264,6 +264,8 @@ export const api = {
   },
   bid: (_auctionId: number, userId: number, productId: number, importe: number) =>
     request('/bids', { method: 'POST', body: JSON.stringify({ cliente_id: userId, item_id: productId, importe }) }),
+  closeItem: (auctionId: number, productId: number) =>
+    request(`/auctions/${auctionId}/close-item/${productId}`, { method: 'POST' }),
   payments: async (userId: number) => {
     const rows = await request<any[]>(`/payments/${userId}`);
     return rows.map((item) => ({

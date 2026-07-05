@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api, API_URL, AuctionDetail, AuctionSummary, Country, ProductItem, UserSession, WS_URL } from './src/api/client';
@@ -701,6 +701,8 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
   const [loading, setLoading] = useState(false);
   const [liveStatus, setLiveStatus] = useState('Conectando en vivo...');
   const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const closingItemRef = useRef<number | null>(null);
+  const alertedItemRef = useRef<number | null>(null);
 
   const load = (resetAmount = true) => api.auction(auctionId, session?.userId).then((data) => {
     const selectedId = selected?.id ?? initialProduct?.id;
@@ -711,7 +713,25 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     setSelected(current);
     setRemainingSeconds(current?.itemTiempoRestanteSegundos ?? data.auction.tiempoRestanteSegundos);
     if (resetAmount) setAmount(String(current?.ofertaMinima ?? ''));
+    return data;
   });
+  const showLotClosedAlert = (closedItemId: number, data: AuctionDetail) => {
+    if (alertedItemRef.current === closedItemId) return;
+    alertedItemRef.current = closedItemId;
+    const hasMoreLots = data.products.some((item) => item.id !== closedItemId && !item.vendido && item.itemEstado !== 'cerrado');
+    Alert.alert(
+      'Subasta terminada',
+      hasMoreLots
+        ? 'El lote terminó. Hay más productos disponibles. ¿Querés quedarte en la sala?'
+        : 'El lote terminó y no quedan más productos disponibles.',
+      hasMoreLots
+        ? [
+            { text: 'Quedarme', style: 'cancel' },
+            { text: 'Retirarme', onPress: onBack },
+          ]
+        : [{ text: 'Aceptar', onPress: onBack }],
+    );
+  };
   useEffect(() => { load().catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.')); }, [auctionId]);
   useEffect(() => {
     const timer = setInterval(() => {
@@ -739,8 +759,9 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
             setLiveStatus(`Nueva puja: ${Number(event.importe).toLocaleString()} ${detail?.auction.moneda ?? ''}`);
           }
         } else if (event.tipo === 'ITEM_CERRADO') {
-          await load(true);
+          const data = await load(true);
           setLiveStatus('Lote cerrado. Buscando siguiente pieza...');
+          showLotClosedAlert(Number(event.itemId), data);
         } else if (event.tipo === 'ITEM_EN_VIVO') {
           await load(true);
           setLiveStatus('Nuevo lote en vivo');
@@ -754,6 +775,19 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     };
     return () => socket.close();
   }, [auctionId, session?.userId]);
+  useEffect(() => {
+    if (!selected || selected.itemEstado !== 'en_vivo' || remainingSeconds > 0) return;
+    if (closingItemRef.current === selected.id) return;
+    closingItemRef.current = selected.id;
+    api.closeItem(auctionId, selected.id)
+      .then(() => load(true))
+      .then((data) => {
+        setLiveStatus('Lote cerrado. Buscando siguiente pieza...');
+        showLotClosedAlert(selected.id, data);
+      })
+      .catch(() => setLiveStatus('Esperando cierre del lote...'))
+      .finally(() => { closingItemRef.current = null; });
+  }, [remainingSeconds, selected?.id, selected?.itemEstado, auctionId]);
 
   const placeBid = async () => {
     if (!session) {

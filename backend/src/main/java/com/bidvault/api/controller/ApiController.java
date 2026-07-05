@@ -1209,7 +1209,7 @@ public class ApiController {
           iniciado_en DATETIME NULL,
           cierra_en DATETIME NULL,
           cerrado_en DATETIME NULL,
-          extension_segundos INT NOT NULL DEFAULT 30,
+          extension_segundos INT NOT NULL DEFAULT 60,
           creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           CONSTRAINT pk_items_subasta_estado PRIMARY KEY (item),
@@ -1255,7 +1255,7 @@ public class ApiController {
         INSERT INTO items_subasta_estado (item, estado, extension_segundos)
         SELECT i.identificador,
                CASE WHEN i.subastado='si' THEN 'cerrado' ELSE 'en_espera' END,
-               30
+               60
         FROM itemsCatalogo i
         JOIN catalogos c ON c.identificador=i.catalogo
         WHERE c.subasta=?
