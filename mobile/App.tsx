@@ -270,7 +270,7 @@ function RegisterScreen({ onDone, onBack }: { onDone: () => void; onBack: () => 
     setLoading(true);
     try {
       await api.register(form);
-      Alert.alert('Registro recibido', 'Tu cuenta quedó pendiente de validación. Cuando sea aprobada, pedí tu contraseña temporal desde el login.');
+      Alert.alert('Registro recibido', 'Tu cuenta quedó pendiente de validación.');
       onDone();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Revisá los campos obligatorios.';
