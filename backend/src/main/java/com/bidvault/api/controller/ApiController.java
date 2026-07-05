@@ -199,8 +199,7 @@ public class ApiController {
         SELECT s.identificador id, c.descripcion titulo, s.fecha, s.hora, s.categoria,
                s.ubicacion,
                CASE
-                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE()
-                   AND GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) > 0 THEN 'abierta'
+                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE() THEN 'abierta'
                  WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
                  ELSE 'programada'
                END estado,
@@ -234,8 +233,7 @@ public class ApiController {
         WHERE (? IS NULL OR c.descripcion LIKE CONCAT('%', ?, '%'))
         GROUP BY s.identificador, c.descripcion, s.fecha, s.hora,
                  CASE
-                   WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE()
-                     AND GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) > 0 THEN 'abierta'
+                   WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE() THEN 'abierta'
                    WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
                    ELSE 'programada'
                  END,
@@ -250,9 +248,9 @@ public class ApiController {
   Map<String, Object> auction(@PathVariable int id, @RequestParam(required = false) Integer clienteId) {
     var rows = jdbc.queryForList("""
         SELECT s.identificador id, c.identificador catalogo_id, c.descripcion titulo, s.fecha, s.hora,
+               COALESCE(se.estado_app, s.estado) estado_config,
                CASE
-                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE()
-                   AND GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) > 0 THEN 'abierta'
+                 WHEN COALESCE(se.estado_app, s.estado)='abierta' AND s.fecha=CURDATE() THEN 'abierta'
                  WHEN COALESCE(se.estado_app, s.estado)='carrada' THEN 'carrada'
                  ELSE 'programada'
                END estado,
@@ -285,7 +283,7 @@ public class ApiController {
         WHERE s.identificador = ?
         """, clienteId, id);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "Subasta no encontrada");
-    if ("abierta".equals(rows.get(0).get("estado"))) {
+    if ("abierta".equals(rows.get(0).get("estado_config"))) {
       closeExpiredItemsForAuction(id);
       ensureLiveItem(id);
       if (finishAuctionIfAllItemsClosed(id)) {
@@ -1084,7 +1082,6 @@ public class ApiController {
         SELECT c.admitido, c.categoria cliente_categoria, s.categoria subasta_categoria,
                COALESCE(se.estado_app, s.estado) subasta_estado,
                s.fecha,
-               GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(TIMESTAMP(s.fecha, s.hora), INTERVAL COALESCE(sc.duracion_minutos, 90) MINUTE))) tiempo_restante_segundos,
                EXISTS(SELECT 1 FROM medios_pago m WHERE m.cliente=c.identificador AND m.verificado='si' AND m.activo='si') pago_ok
         FROM clientes c
         CROSS JOIN subastas s
@@ -1098,8 +1095,7 @@ public class ApiController {
     if (rank(row.get("cliente_categoria").toString()) < rank(row.get("subasta_categoria").toString())) {
       throw new ApiException(HttpStatus.FORBIDDEN, "Tu categoria no tiene permiso para ingresar a esta subasta");
     }
-    if (!"abierta".equals(row.get("subasta_estado")) || !java.time.LocalDate.now().toString().equals(Objects.toString(row.get("fecha"))) ||
-        ((Number) row.get("tiempo_restante_segundos")).intValue() <= 0) {
+    if (!"abierta".equals(row.get("subasta_estado")) || !java.time.LocalDate.now().toString().equals(Objects.toString(row.get("fecha")))) {
       throw new ApiException(HttpStatus.FORBIDDEN, "La subasta no esta en vivo en este momento");
     }
     if (requirePayment && ((Number) row.get("pago_ok")).intValue() == 0) {

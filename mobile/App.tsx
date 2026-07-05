@@ -701,6 +701,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
   const [loading, setLoading] = useState(false);
   const [liveStatus, setLiveStatus] = useState('Conectando en vivo...');
   const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const [closeRetryTick, setCloseRetryTick] = useState(0);
   const closingItemRef = useRef<number | null>(null);
   const alertedItemRef = useRef<number | null>(null);
 
@@ -747,6 +748,13 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     return () => clearInterval(refresh);
   }, [auctionId, session?.userId]);
   useEffect(() => {
+    if (!selected || selected.itemEstado !== 'en_vivo' || remainingSeconds > 0) return;
+    const retry = setInterval(() => {
+      setCloseRetryTick((current) => current + 1);
+    }, 3000);
+    return () => clearInterval(retry);
+  }, [selected?.id, selected?.itemEstado, remainingSeconds]);
+  useEffect(() => {
     const socket = new WebSocket(`${WS_URL}/ws/auctions/${auctionId}`);
     socket.onopen = () => setLiveStatus('Sala en vivo conectada');
     socket.onerror = () => setLiveStatus('Sala en vivo sin conexión');
@@ -790,9 +798,12 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
         const hasMoreLots = showLotClosedAlert(selected.id, data);
         setLiveStatus(hasMoreLots ? 'Lote cerrado. Buscando siguiente pieza...' : 'Subasta finalizada');
       })
-      .catch(() => setLiveStatus('Esperando cierre del lote...'))
+      .catch(() => {
+        setLiveStatus('Reintentando cierre del lote...');
+        setCloseRetryTick((current) => current + 1);
+      })
       .finally(() => { closingItemRef.current = null; });
-  }, [remainingSeconds, selected?.id, selected?.itemEstado, auctionId]);
+  }, [remainingSeconds, selected?.id, selected?.itemEstado, auctionId, closeRetryTick]);
 
   const placeBid = async () => {
     if (!session) {
