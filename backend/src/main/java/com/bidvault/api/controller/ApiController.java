@@ -246,6 +246,7 @@ public class ApiController {
   }
 
   @GetMapping("/auctions/{id}")
+  @Transactional
   Map<String, Object> auction(@PathVariable int id, @RequestParam(required = false) Integer clienteId) {
     var rows = jdbc.queryForList("""
         SELECT s.identificador id, c.identificador catalogo_id, c.descripcion titulo, s.fecha, s.hora,
@@ -284,6 +285,10 @@ public class ApiController {
         WHERE s.identificador = ?
         """, clienteId, id);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "Subasta no encontrada");
+    if ("abierta".equals(rows.get(0).get("estado"))) {
+      closeExpiredItemsForAuction(id);
+      ensureLiveItem(id);
+    }
     var items = jdbc.queryForList("""
         SELECT i.identificador item_id, pr.identificador producto_id, pr.descripcionCatalogo descripcion,
                pr.descripcionCompleta pdf, pr.disponible, i.precioBase, i.comision, i.subastado,
@@ -1026,6 +1031,24 @@ public class ApiController {
   @Transactional
   public void closeExpiredDynamicItems() {
     ensureItemStateTable();
+    var auctions = jdbc.queryForList("""
+        SELECT DISTINCT ca.subasta
+        FROM items_subasta_estado ise
+        JOIN itemsCatalogo i ON i.identificador=ise.item
+        JOIN catalogos ca ON ca.identificador=i.catalogo
+        WHERE ise.estado='en_vivo'
+          AND ise.cierra_en IS NOT NULL
+          AND ise.cierra_en <= NOW()
+          AND i.subastado='no'
+        LIMIT 10
+        """);
+    for (var auction : auctions) {
+      closeExpiredItemsForAuction(((Number) auction.get("subasta")).intValue());
+    }
+  }
+
+  private void closeExpiredItemsForAuction(int subastaId) {
+    ensureItemStateTable();
     var rows = jdbc.queryForList("""
         SELECT ise.item, ca.subasta
         FROM items_subasta_estado ise
@@ -1035,15 +1058,16 @@ public class ApiController {
           AND ise.cierra_en IS NOT NULL
           AND ise.cierra_en <= NOW()
           AND i.subastado='no'
+          AND ca.subasta=?
         ORDER BY ise.cierra_en, ise.item
         LIMIT 10
-        """);
+        """, subastaId);
     for (var row : rows) {
       int itemId = ((Number) row.get("item")).intValue();
-      int subastaId = ((Number) row.get("subasta")).intValue();
-      closeItemSale(subastaId, itemId);
-      realtimeHub.publish(subastaId, Map.of("tipo", "ITEM_CERRADO", "subastaId", subastaId, "itemId", itemId));
-      ensureLiveItem(subastaId);
+      int itemSubastaId = ((Number) row.get("subasta")).intValue();
+      closeItemSale(itemSubastaId, itemId);
+      realtimeHub.publish(itemSubastaId, Map.of("tipo", "ITEM_CERRADO", "subastaId", itemSubastaId, "itemId", itemId));
+      ensureLiveItem(itemSubastaId);
     }
   }
 
