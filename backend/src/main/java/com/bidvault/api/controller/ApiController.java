@@ -139,21 +139,19 @@ public class ApiController {
         INSERT INTO duenios (identificador, numeroPais, `verificacionFinanciera`, `verificacionJudicial`, calificacionRiesgo, verificador)
         VALUES (?, ?, 'no', 'no', 6, 1)
         """, personaId, numeroPais);
-    String temporaryPassword = temporaryPassword();
     jdbc.update("""
         INSERT INTO usuarios_app (persona, email, password_hash, password_temporal, rol)
-        VALUES (?, ?, ?, 'si', 'cliente')
-        """, personaId, email, encoder.encode(temporaryPassword));
+        VALUES (?, ?, ?, 'no', 'cliente')
+        """, personaId, email, encoder.encode(UUID.randomUUID().toString()));
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
-        VALUES (?, 'Registrado', 'Su registro fue recibido. Le enviaremos un correo cuando la validación se complete.', 'importante')
+        VALUES (?, 'Registrado', 'Su registro fue recibido y quedó pendiente de revisión por la empresa.', 'importante')
         """, personaId);
     jdbc.update("""
         INSERT INTO documentos_verificacion (persona, tipo_documento, frente, dorso, estado, observacion)
         VALUES (?, 'DNI', ?, ?, 'aprobada_simulada', 'Validacion simulada desde el registro')
         """, personaId, decodeBase64Image(request.dniFrenteBase64()), decodeBase64Image(request.dniDorsoBase64()));
 
-    sendTemporaryPasswordOrFail(email, request.nombre() + " " + request.apellido(), temporaryPassword);
     return Map.of("persona_id", personaId, "estado", "pendiente_validacion");
   }
 

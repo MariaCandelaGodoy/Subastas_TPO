@@ -13,7 +13,7 @@ WHERE u.email = @email;
 INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
 SELECT u.persona,
        'Cuenta validada',
-       'Tu cuenta fue validada. Desde el login usa Olvide mi contraseña para recibir tu clave temporal.',
+       'Tu cuenta fue validada. Desde el login usa Olvidé mi contraseña para recibir tu clave temporal.',
        'importante'
 FROM usuarios_app u
 WHERE u.email = @email
