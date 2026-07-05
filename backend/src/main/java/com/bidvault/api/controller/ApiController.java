@@ -463,7 +463,7 @@ public class ApiController {
   @Transactional
   Map<String, Object> closeItem(@PathVariable int id, @PathVariable int itemId) {
     Map<String, Object> result = closeItemSale(id, itemId);
-    realtimeHub.publish(id, Map.of("tipo", "ITEM_CERRADO", "subastaId", id, "itemId", itemId));
+    publishItemClosed(id, itemId, result);
     ensureLiveItem(id);
     boolean finished = finishAuctionIfAllItemsClosed(id);
     var response = new java.util.LinkedHashMap<>(result);
@@ -524,7 +524,7 @@ public class ApiController {
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         VALUES (?, 'Ganaste la subasta', ?, 'importante')
         """, w.get("cliente"), "Importe: " + importe + ". Comisión: " + comision + ". Coordiná envío o retiro.");
-    return Map.of("registro_id", registro, "importe", importe, "comision", comision, "empresa_compra", empresaCompra);
+    return Map.of("registro_id", registro, "cliente_id", w.get("cliente"), "importe", importe, "comision", comision, "empresa_compra", empresaCompra);
   }
 
   @GetMapping("/payments/{clienteId}")
@@ -1069,11 +1069,22 @@ public class ApiController {
     for (var row : rows) {
       int itemId = ((Number) row.get("item")).intValue();
       int itemSubastaId = ((Number) row.get("subasta")).intValue();
-      closeItemSale(itemSubastaId, itemId);
-      realtimeHub.publish(itemSubastaId, Map.of("tipo", "ITEM_CERRADO", "subastaId", itemSubastaId, "itemId", itemId));
+      Map<String, Object> result = closeItemSale(itemSubastaId, itemId);
+      publishItemClosed(itemSubastaId, itemId, result);
       ensureLiveItem(itemSubastaId);
       finishAuctionIfAllItemsClosed(itemSubastaId);
     }
+  }
+
+  private void publishItemClosed(int subastaId, int itemId, Map<String, Object> result) {
+    var event = new java.util.LinkedHashMap<String, Object>();
+    event.put("tipo", "ITEM_CERRADO");
+    event.put("subastaId", subastaId);
+    event.put("itemId", itemId);
+    event.put("clienteId", result.get("cliente_id"));
+    event.put("importe", result.get("importe"));
+    event.put("empresaCompra", result.get("empresa_compra"));
+    realtimeHub.publish(subastaId, event);
   }
 
   private void ensureCanParticipate(int clienteId, int subastaId, boolean requirePayment) {

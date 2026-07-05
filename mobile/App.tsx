@@ -734,6 +734,27 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     );
     return hasMoreLots;
   };
+  const showCloseOutcomeAlert = (closedItemId: number, data: AuctionDetail, winnerClientId?: unknown, winningAmount?: unknown) => {
+    const hasMoreLots = data.products.some((item) => item.id !== closedItemId && !item.vendido && item.itemEstado !== 'cerrado');
+    const userWon = session && Number(winnerClientId) === session.userId;
+    if (!userWon) return showLotClosedAlert(closedItemId, data);
+    if (alertedItemRef.current === closedItemId) return hasMoreLots;
+    alertedItemRef.current = closedItemId;
+    const amountText = Number(winningAmount) > 0 ? ` por $ ${Number(winningAmount).toLocaleString()} ${data.auction.moneda}` : '';
+    Alert.alert(
+      'Ganaste la subasta',
+      hasMoreLots
+        ? `Ganaste este lote${amountText}. Hay más productos disponibles. ¿Querés quedarte en la sala?`
+        : `Ganaste este lote${amountText}. No quedan más productos disponibles.`,
+      hasMoreLots
+        ? [
+            { text: 'Quedarme', style: 'cancel' },
+            { text: 'Retirarme', onPress: onBack },
+          ]
+        : [{ text: 'Aceptar', onPress: onBack }],
+    );
+    return hasMoreLots;
+  };
   useEffect(() => { load().catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.')); }, [auctionId]);
   useEffect(() => {
     const timer = setInterval(() => {
@@ -769,7 +790,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
           }
         } else if (event.tipo === 'ITEM_CERRADO') {
           const data = await load(true);
-          const hasMoreLots = showLotClosedAlert(Number(event.itemId), data);
+          const hasMoreLots = showCloseOutcomeAlert(Number(event.itemId), data, event.clienteId, event.importe);
           setLiveStatus(hasMoreLots ? 'Lote cerrado. Buscando siguiente pieza...' : 'Subasta finalizada');
         } else if (event.tipo === 'ITEM_EN_VIVO') {
           await load(true);
@@ -793,9 +814,9 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     if (closingItemRef.current === selected.id) return;
     closingItemRef.current = selected.id;
     api.closeItem(auctionId, selected.id)
-      .then(() => load(true))
-      .then((data) => {
-        const hasMoreLots = showLotClosedAlert(selected.id, data);
+      .then((result: any) => load(true).then((data) => ({ data, result })))
+      .then(({ data, result }) => {
+        const hasMoreLots = showCloseOutcomeAlert(selected.id, data, result?.cliente_id, result?.importe);
         setLiveStatus(hasMoreLots ? 'Lote cerrado. Buscando siguiente pieza...' : 'Subasta finalizada');
       })
       .catch(() => {
@@ -883,7 +904,6 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
           <Text style={styles.range}>Minimo {selected.ofertaMinima.toLocaleString()} {selected.ofertaMaxima ? ` | Maximo ${selected.ofertaMaxima.toLocaleString()}` : ' | Sin maximo para Oro/Platino'}</Text>
           <Field label="Tu puja" value={amount} onChangeText={setAmount} keyboardType="numeric" />
           <PrimaryButton label={loading ? 'Confirmando...' : 'Pujar'} onPress={placeBid} disabled={loading || detail.auction.estado !== 'EN_VIVO' || selected.itemEstado !== 'en_vivo' || remainingSeconds <= 0} />
-          <Pressable onPress={onPayments}><Text style={styles.link}>Gestionar metodos de pago</Text></Pressable>
         </>
       )}
     </Screen>
