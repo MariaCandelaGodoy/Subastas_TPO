@@ -562,7 +562,7 @@ function AuctionDetailScreen({
       <View style={styles.auctionInfoCard}>
         <View style={styles.auctionCoverWrap}>
           {cover ? <Image source={cover} style={styles.auctionDetailCover} resizeMode="cover" /> : <View style={styles.auctionDetailCoverFallback}><Ionicons name="image-outline" size={42} color={colors.gold} /></View>}
-          <Text style={styles.auctionLivePill}>{detail.auction.estado === 'EN_VIVO' ? 'EN VIVO' : 'PROGRAMADA'}</Text>
+          <Text style={styles.auctionLivePill}>{detail.auction.estado === 'EN_VIVO' ? 'EN VIVO' : detail.auction.estado === 'FINALIZADA' ? 'FINALIZADA' : 'PROGRAMADA'}</Text>
         </View>
         <View style={styles.auctionTitleRow}>
           <Text style={styles.auctionDetailTitle}>{detail.auction.titulo}</Text>
@@ -576,7 +576,7 @@ function AuctionDetailScreen({
         </View>
       </View>
       <PrimaryButton
-        label={detail.auction.estado === 'EN_VIVO' ? 'Unirme' : 'Subasta programada'}
+        label={detail.auction.estado === 'EN_VIVO' ? 'Unirme' : detail.auction.estado === 'FINALIZADA' ? 'Finalizada' : 'Subasta programada'}
         onPress={onJoin}
         disabled={detail.auction.estado !== 'EN_VIVO'}
       />
@@ -716,9 +716,9 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     return data;
   });
   const showLotClosedAlert = (closedItemId: number, data: AuctionDetail) => {
-    if (alertedItemRef.current === closedItemId) return;
-    alertedItemRef.current = closedItemId;
     const hasMoreLots = data.products.some((item) => item.id !== closedItemId && !item.vendido && item.itemEstado !== 'cerrado');
+    if (alertedItemRef.current === closedItemId) return hasMoreLots;
+    alertedItemRef.current = closedItemId;
     Alert.alert(
       'Subasta terminada',
       hasMoreLots
@@ -731,6 +731,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
           ]
         : [{ text: 'Aceptar', onPress: onBack }],
     );
+    return hasMoreLots;
   };
   useEffect(() => { load().catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.')); }, [auctionId]);
   useEffect(() => {
@@ -760,11 +761,15 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
           }
         } else if (event.tipo === 'ITEM_CERRADO') {
           const data = await load(true);
-          setLiveStatus('Lote cerrado. Buscando siguiente pieza...');
-          showLotClosedAlert(Number(event.itemId), data);
+          const hasMoreLots = showLotClosedAlert(Number(event.itemId), data);
+          setLiveStatus(hasMoreLots ? 'Lote cerrado. Buscando siguiente pieza...' : 'Subasta finalizada');
         } else if (event.tipo === 'ITEM_EN_VIVO') {
           await load(true);
           setLiveStatus('Nuevo lote en vivo');
+        } else if (event.tipo === 'SUBASTA_FINALIZADA') {
+          const data = await load(true);
+          setLiveStatus('Subasta finalizada');
+          if (selected) showLotClosedAlert(selected.id, data);
         } else if (event.tipo === 'ESPECTADORES') {
           await load(false);
           setLiveStatus('Espectadores actualizados');
@@ -782,8 +787,8 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     api.closeItem(auctionId, selected.id)
       .then(() => load(true))
       .then((data) => {
-        setLiveStatus('Lote cerrado. Buscando siguiente pieza...');
-        showLotClosedAlert(selected.id, data);
+        const hasMoreLots = showLotClosedAlert(selected.id, data);
+        setLiveStatus(hasMoreLots ? 'Lote cerrado. Buscando siguiente pieza...' : 'Subasta finalizada');
       })
       .catch(() => setLiveStatus('Esperando cierre del lote...'))
       .finally(() => { closingItemRef.current = null; });

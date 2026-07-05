@@ -288,6 +288,9 @@ public class ApiController {
     if ("abierta".equals(rows.get(0).get("estado"))) {
       closeExpiredItemsForAuction(id);
       ensureLiveItem(id);
+      if (finishAuctionIfAllItemsClosed(id)) {
+        rows.get(0).put("estado", "carrada");
+      }
     }
     var items = jdbc.queryForList("""
         SELECT i.identificador item_id, pr.identificador producto_id, pr.descripcionCatalogo descripcion,
@@ -464,7 +467,10 @@ public class ApiController {
     Map<String, Object> result = closeItemSale(id, itemId);
     realtimeHub.publish(id, Map.of("tipo", "ITEM_CERRADO", "subastaId", id, "itemId", itemId));
     ensureLiveItem(id);
-    return result;
+    boolean finished = finishAuctionIfAllItemsClosed(id);
+    var response = new java.util.LinkedHashMap<>(result);
+    response.put("subasta_finalizada", finished);
+    return response;
   }
 
   private Map<String, Object> closeItemSale(int id, int itemId) {
@@ -1068,6 +1074,7 @@ public class ApiController {
       closeItemSale(itemSubastaId, itemId);
       realtimeHub.publish(itemSubastaId, Map.of("tipo", "ITEM_CERRADO", "subastaId", itemSubastaId, "itemId", itemId));
       ensureLiveItem(itemSubastaId);
+      finishAuctionIfAllItemsClosed(itemSubastaId);
     }
   }
 
@@ -1321,6 +1328,33 @@ public class ApiController {
         """, itemId);
     realtimeHub.publish(subastaId, Map.of("tipo", "ITEM_EN_VIVO", "subastaId", subastaId, "itemId", itemId,
         "itemTiempoRestanteSegundos", itemRemainingSeconds(itemId)));
+  }
+
+  private boolean finishAuctionIfAllItemsClosed(int subastaId) {
+    Integer remaining = jdbc.queryForObject("""
+        SELECT COUNT(*)
+        FROM itemsCatalogo i
+        JOIN catalogos c ON c.identificador=i.catalogo
+        WHERE c.subasta=? AND i.subastado='no'
+        """, Integer.class, subastaId);
+    if (remaining != null && remaining > 0) return false;
+    String current = jdbc.queryForObject("""
+        SELECT COALESCE(se.estado_app, s.estado)
+        FROM subastas s
+        LEFT JOIN subastas_estados_app se ON se.subasta=s.identificador
+        WHERE s.identificador=?
+        """, String.class, subastaId);
+    if (!"carrada".equals(current)) {
+      jdbc.update("UPDATE subastas SET estado='carrada' WHERE identificador=?", subastaId);
+      jdbc.update("""
+          INSERT INTO subastas_estados_app (subasta, estado_app)
+          VALUES (?, 'carrada')
+          ON DUPLICATE KEY UPDATE estado_app=VALUES(estado_app)
+          """, subastaId);
+      jdbc.update("UPDATE sesiones_subasta SET activa='no' WHERE subasta=?", subastaId);
+      realtimeHub.publish(subastaId, Map.of("tipo", "SUBASTA_FINALIZADA", "subastaId", subastaId));
+    }
+    return true;
   }
 
   private int itemRemainingSeconds(int itemId) {
