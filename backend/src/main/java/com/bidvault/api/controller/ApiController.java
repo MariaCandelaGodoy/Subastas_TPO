@@ -155,6 +155,37 @@ public class ApiController {
     return Map.of("persona_id", personaId, "estado", "pendiente_validacion");
   }
 
+  @PostMapping("/admin/users/approve")
+  @Transactional
+  Map<String, Object> approveUser(@RequestBody ApproveUserRequest request) {
+    require(request.email(), "El email es obligatorio");
+    String email = request.email().trim().toLowerCase();
+    var users = jdbc.queryForList("""
+        SELECT u.identificador usuario_id, u.persona, p.nombre, c.admitido
+        FROM usuarios_app u
+        JOIN personas p ON p.identificador = u.persona
+        JOIN clientes c ON c.identificador = p.identificador
+        WHERE u.email = ?
+        """, email);
+    if (users.isEmpty()) {
+      throw new ApiException(HttpStatus.NOT_FOUND, "Usuario no encontrado");
+    }
+    var user = users.get(0);
+    String temporaryPassword = temporaryPassword();
+    jdbc.update("UPDATE clientes SET admitido='si' WHERE identificador=?", user.get("persona"));
+    jdbc.update("""
+        UPDATE usuarios_app
+        SET password_hash=?, password_temporal='si'
+        WHERE identificador=?
+        """, encoder.encode(temporaryPassword), user.get("usuario_id"));
+    jdbc.update("""
+        INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
+        VALUES (?, 'Cuenta validada', 'Tu cuenta fue validada. Te enviamos una clave temporal por correo.', 'importante')
+        """, user.get("persona"));
+    sendTemporaryPasswordOrFail(email, Objects.toString(user.get("nombre"), "Usuario"), temporaryPassword);
+    return Map.of("email", email, "persona_id", user.get("persona"), "admitido", "si", "password_temporal", "si");
+  }
+
   @GetMapping("/countries")
   List<Map<String, Object>> countries() {
     return jdbc.queryForList("SELECT numero, nombre, nombreCorto FROM paises ORDER BY nombre");
@@ -1480,6 +1511,7 @@ public class ApiController {
   }
 
   public record LoginRequest(String email, String password) {}
+  public record ApproveUserRequest(String email) {}
   public record RegisterRequest(String nombre, String apellido, String email, String password, String documento, String direccion, String pais, Integer numeroPais, String dniFrenteBase64, String dniDorsoBase64) {}
   public record ClientRequest(int clienteId) {}
   public record JoinAuctionRequest(int clienteId, int medioPagoId) {}

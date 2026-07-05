@@ -38,10 +38,10 @@ La idea es simular el sistema interno de la empresa. La app mobile es para clien
    - Corrige solicitudes antiguas donde el rechazo del usuario habia quedado como `en_revision`.
    - Las pasa a `devuelto` con cargo de devolucion.
 
-7. `06_validar_usuario_registrado.sql`
-   - Cambiar `@email`.
-   - Pasa `clientes.admitido` a `si`.
-   - Despues el usuario puede pedir clave temporal desde "Olvide mi contraseña".
+7. Validar usuario registrado
+   - Flujo recomendado: `POST /api/admin/users/approve` con body `{"email":"usuario@bidvault.com"}`.
+   - Ese endpoint pasa `clientes.admitido` a `si`, genera una clave temporal y envia el correo automaticamente.
+   - `06_validar_usuario_registrado.sql` queda como alternativa manual sin envio de mail.
 
 8. `metodos_de_pago.sql`
    - Cambiar `@medio_pago_id` y `@estado`.
