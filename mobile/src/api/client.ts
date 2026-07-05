@@ -275,6 +275,7 @@ export const api = {
       ultimosDigitos: String(item.referencia ?? '').slice(-4),
       garantiaDisponible: item.monto_reservado,
       estado: item.verificado === 'si' ? 'VERIFICADO' : 'PENDIENTE',
+      resultadoPagoSimulado: item.resultado_pago_simulado ?? 'aprobado',
     }));
   },
   addPayment: async (payload: Record<string, unknown>) => {

@@ -801,11 +801,11 @@ public class ApiController {
   }
 
   @PutMapping("/invoices/{invoiceId}/pay")
-  @Transactional
+  @Transactional(noRollbackFor = ApiException.class)
   Map<String, Object> payInvoice(@PathVariable int invoiceId, @RequestBody PayInvoiceRequest request) {
     ensureUserNotBlocked(request.userId());
     var invoice = one("""
-        SELECT fc.identificador, fc.total, r.cliente,
+        SELECT fc.identificador, fc.total, r.cliente, r.identificador registro,
                COALESCE(sc.moneda, 'ARS') moneda
         FROM facturas_compra fc
         JOIN registroDeSubasta r ON r.identificador=fc.registro
@@ -817,7 +817,8 @@ public class ApiController {
       throw new ApiException(HttpStatus.FORBIDDEN, "La factura no pertenece al usuario");
     }
     var payment = one("""
-        SELECT identificador, verificado, tipo, moneda, monto_reservado
+        SELECT identificador, verificado, tipo, moneda, monto_reservado,
+               COALESCE(resultado_pago_simulado, 'aprobado') resultado_pago_simulado
         FROM medios_pago
         WHERE identificador=? AND cliente=? AND activo='si'
         """, "Medio de pago no encontrado", request.paymentMethodId(), request.userId());
@@ -834,6 +835,14 @@ public class ApiController {
       throw new ApiException(HttpStatus.BAD_REQUEST, "Las subastas en dolares solo pueden pagarse con transferencia o tarjeta internacional.");
     }
     ensurePaymentLimit(payment, (BigDecimal) invoice.get("total"), "pagar esta factura");
+    if ("fondos_insuficientes".equals(Objects.toString(payment.get("resultado_pago_simulado"), ""))) {
+      createPaymentFailurePenalty(invoice, "Pago rechazado por fondos insuficientes en la pasarela simulada");
+      throw new ApiException(HttpStatus.PAYMENT_REQUIRED,
+          "Pago rechazado por fondos insuficientes. Se generó una multa del 10% que debes pagar antes de participar en otra subasta.");
+    }
+    if ("rechazado".equals(Objects.toString(payment.get("resultado_pago_simulado"), ""))) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "La pasarela simulada rechazo el pago con este medio.");
+    }
     jdbc.update("""
         UPDATE facturas_compra
         SET medio_pago=?, estado='pagada', pagado_en=CURRENT_TIMESTAMP
@@ -1079,15 +1088,41 @@ public class ApiController {
         """, registroId, envioId, numero, subtotal, comision, costoEnvio, total);
   }
 
+  private void createPaymentFailurePenalty(Map<String, Object> invoice, String reason) {
+    ensurePenaltyTable();
+    BigDecimal total = (BigDecimal) invoice.get("total");
+    BigDecimal penalty = total.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
+    jdbc.update("""
+        INSERT INTO multas_incumplimiento
+        (cliente, registro, factura, importe_base, importe_multa, vencimiento, estado, motivo)
+        VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 72 HOUR), 'pendiente', ?)
+        ON DUPLICATE KEY UPDATE
+          importe_base=VALUES(importe_base),
+          importe_multa=VALUES(importe_multa),
+          estado=IF(estado='pagada', estado, 'pendiente'),
+          motivo=VALUES(motivo)
+        """, invoice.get("cliente"), invoice.get("registro"), invoice.get("identificador"), total, penalty, reason);
+    jdbc.update("""
+        INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
+        VALUES (?, 'Multa por pago rechazado', ?, 'importante')
+        """, invoice.get("cliente"),
+        "El pago fue rechazado por fondos insuficientes. Se generó una multa de " + penalty + " que debe abonarse antes de participar en otra subasta.");
+  }
+
   private void ensureUserNotBlocked(int clienteId) {
     refreshOverduePenalties();
     var rows = jdbc.queryForList("""
-        SELECT identificador, importe_multa
+        SELECT identificador, importe_multa, estado
         FROM multas_incumplimiento
-        WHERE cliente=? AND estado='derivada_justicia'
+        WHERE cliente=? AND estado IN ('pendiente','derivada_justicia')
         LIMIT 1
         """, clienteId);
     if (!rows.isEmpty()) {
+      String estado = Objects.toString(rows.get(0).get("estado"));
+      if ("pendiente".equals(estado)) {
+        throw new ApiException(HttpStatus.FORBIDDEN,
+            "Tenes una multa pendiente del 10% por incumplimiento de pago. Debes abonarla antes de participar en otra subasta.");
+      }
       throw new ApiException(HttpStatus.FORBIDDEN,
           "Tu usuario esta bloqueado por incumplimiento de pago. Tenes una multa pendiente del 10% y el caso fue derivado a la justicia.");
     }
