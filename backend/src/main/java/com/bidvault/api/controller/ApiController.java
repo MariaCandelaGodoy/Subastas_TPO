@@ -524,6 +524,16 @@ public class ApiController {
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         VALUES (?, 'Ganaste la subasta', ?, 'importante')
         """, w.get("cliente"), "Importe: " + importe + ". Comisión: " + comision + ". Coordiná envío o retiro.");
+    jdbc.update("""
+        INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
+        SELECT DISTINCT a.cliente,
+               'No ganaste la subasta',
+               CONCAT('El lote finalizo y tu oferta no resulto ganadora. Oferta ganadora: ', ?, '.'),
+               'otra'
+        FROM pujos p
+        JOIN asistentes a ON a.identificador=p.asistente
+        WHERE p.item=? AND a.cliente<>?
+        """, importe, itemId, w.get("cliente"));
     return Map.of("registro_id", registro, "cliente_id", w.get("cliente"), "importe", importe, "comision", comision, "empresa_compra", empresaCompra);
   }
 
@@ -872,8 +882,12 @@ public class ApiController {
     if ("USD".equals(invoiceCurrency) && !("cuenta".equals(paymentType) || "tarjeta".equals(paymentType))) {
       throw new ApiException(HttpStatus.BAD_REQUEST, "Las subastas en dolares solo pueden pagarse con transferencia o tarjeta internacional.");
     }
-    ensurePaymentLimit(payment, (BigDecimal) invoice.get("total"), "pagar esta factura");
-    if ("fondos_insuficientes".equals(Objects.toString(payment.get("resultado_pago_simulado"), ""))) {
+    BigDecimal invoiceTotal = (BigDecimal) invoice.get("total");
+    boolean simulatedInsufficientFunds = "fondos_insuficientes".equals(Objects.toString(payment.get("resultado_pago_simulado"), ""));
+    boolean checkInsufficientFunds = "cheque".equals(paymentType) &&
+        payment.get("monto_reservado") != null &&
+        ((BigDecimal) payment.get("monto_reservado")).compareTo(invoiceTotal) < 0;
+    if (simulatedInsufficientFunds || checkInsufficientFunds) {
       createPaymentFailurePenalty(invoice, "Pago rechazado por fondos insuficientes en la pasarela simulada");
       throw new ApiException(HttpStatus.PAYMENT_REQUIRED,
           "Pago rechazado por fondos insuficientes. Se generó una multa del 10% que debes pagar antes de participar en otra subasta.");
@@ -1088,7 +1102,7 @@ public class ApiController {
   }
 
   private void ensureCanParticipate(int clienteId, int subastaId, boolean requirePayment) {
-    ensureUserNotBlocked(clienteId);
+    ensureUserCanParticipateWithoutPendingPenalty(clienteId);
     var rows = jdbc.queryForList("""
         SELECT c.admitido, c.categoria cliente_categoria, s.categoria subasta_categoria,
                COALESCE(se.estado_app, s.estado) subasta_estado,
@@ -1181,22 +1195,36 @@ public class ApiController {
     var rows = jdbc.queryForList("""
         SELECT identificador, importe_multa, estado
         FROM multas_incumplimiento
-        WHERE cliente=? AND estado IN ('pendiente','derivada_justicia')
+        WHERE cliente=? AND estado='derivada_justicia'
         LIMIT 1
         """, clienteId);
     if (!rows.isEmpty()) {
-      String estado = Objects.toString(rows.get(0).get("estado"));
-      if ("pendiente".equals(estado)) {
-        throw new ApiException(HttpStatus.FORBIDDEN,
-            "Tenes una multa pendiente del 10% por incumplimiento de pago. Debes abonarla antes de participar en otra subasta.");
-      }
       throw new ApiException(HttpStatus.FORBIDDEN,
           "Tu usuario esta bloqueado por incumplimiento de pago. Tenes una multa pendiente del 10% y el caso fue derivado a la justicia.");
     }
   }
 
+  private void ensureUserCanParticipateWithoutPendingPenalty(int clienteId) {
+    ensureUserNotBlocked(clienteId);
+    var rows = jdbc.queryForList("""
+        SELECT identificador, importe_multa
+        FROM multas_incumplimiento
+        WHERE cliente=? AND estado='pendiente'
+        LIMIT 1
+        """, clienteId);
+    if (!rows.isEmpty()) {
+      throw new ApiException(HttpStatus.FORBIDDEN,
+          "Tenes una multa pendiente del 10% por incumplimiento de pago. Debes abonarla antes de participar en otra subasta.");
+    }
+  }
+
   private void refreshOverduePenalties() {
     ensurePenaltyTable();
+    jdbc.update("""
+        UPDATE multas_incumplimiento
+        SET estado='derivada_justicia'
+        WHERE estado='pendiente' AND vencimiento <= NOW()
+        """);
     jdbc.update("""
         INSERT INTO multas_incumplimiento
         (cliente, registro, factura, importe_base, importe_multa, vencimiento, estado, motivo)

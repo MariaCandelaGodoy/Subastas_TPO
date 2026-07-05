@@ -1331,7 +1331,6 @@ function PurchaseInvoiceScreen({ session, invoice, onBack, onDone }: { session: 
     const itemType = String(item.tipo ?? '').toUpperCase();
     if (itemCurrency !== currency) return false;
     if (currency === 'USD') return itemType.includes('CUENTA') || itemType.includes('TARJETA');
-    if (itemType.includes('CHEQUE') && Number(item.garantiaDisponible ?? 0) < total) return false;
     return true;
   };
   const compatiblePayments = payments.filter(isPaymentCompatible);
@@ -1341,9 +1340,6 @@ function PurchaseInvoiceScreen({ session, invoice, onBack, onDone }: { session: 
     if (!method) return Alert.alert('Medio de pago requerido', 'Seleccioná un medio de pago.');
     if (method.estado !== 'VERIFICADO') return Alert.alert('Medio pendiente', 'Solo podés pagar con medios verificados.');
     if (!isPaymentCompatible(method)) return Alert.alert('Medio no compatible', currency === 'USD' ? 'Las subastas en dólares solo pueden pagarse con transferencia o tarjeta internacional en USD.' : `Seleccioná un medio de pago en ${currency}.`);
-    if (String(method.tipo ?? '').toUpperCase().includes('CHEQUE') && Number(method.garantiaDisponible ?? 0) < total) {
-      return Alert.alert('Límite insuficiente', `El cheque certificado debe cubrir el total de la factura: ${total.toLocaleString()} ${currency}.`);
-    }
     setPaying(true);
     try {
       await api.payInvoice(invoiceId, { userId: session.userId, paymentMethodId: selected });
