@@ -2114,7 +2114,9 @@ function PieceRequestCard({ piece, onAccept, onReject, onCustody }: { piece: any
   const hasProposal = status === 'en_revision' && Boolean(piece.propuestaId) && piece.propuestaEstado === 'pendiente_usuario';
   const hasReturnCharge = status === 'devuelto' && motivo.includes('devolucion con cargo');
   const shouldShowDeliveryAddress = status === 'pendiente' || status === 'en_revision';
-  const deliveryAddress = 'Enviá o acercá el producto a Av. Corrientes 1234, CABA, lunes a viernes de 9 a 18 hs.';
+  const deliveryAddress = piece.deposito
+    ? `Enviá o acercá el producto a ${piece.deposito}.`
+    : 'La empresa todavía no asignó una dirección para recibir el producto.';
   const formatDate = (value?: string) => {
     const [year, month, day] = String(value || '').split('-');
     return year && month && day ? `${day}/${month}/${year}` : value ?? '';
