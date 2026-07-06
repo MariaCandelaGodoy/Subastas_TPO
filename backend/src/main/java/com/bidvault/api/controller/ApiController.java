@@ -1470,7 +1470,6 @@ public class ApiController {
     ensureSettlementTables();
     BigDecimal saleAmount = (BigDecimal) invoice.get("importe");
     BigDecimal commission = (BigDecimal) invoice.get("comision");
-    String status = pending.compareTo(BigDecimal.ZERO) <= 0 ? "cobrada" : charged.compareTo(BigDecimal.ZERO) > 0 ? "parcial" : "pendiente";
     jdbc.update("""
         INSERT INTO liquidaciones_duenio
         (registro, factura, duenio, cliente, importe_venta, comision, importe_cobrado, saldo_pendiente, moneda, estado)
@@ -1484,11 +1483,14 @@ public class ApiController {
           moneda=VALUES(moneda),
           estado=VALUES(estado)
         """, invoice.get("registro"), invoice.get("identificador"), invoice.get("duenio"), invoice.get("cliente"),
-        saleAmount, commission, charged, pending, invoice.get("moneda"), status);
+        saleAmount, commission, saleAmount, BigDecimal.ZERO, invoice.get("moneda"), "cobrada");
+    String coverageMessage = pending.compareTo(BigDecimal.ZERO) > 0
+        ? " El comprador quedo con saldo pendiente, pero BidVault cubrio la diferencia."
+        : "";
     notifyOwnerIfClient(((Number) invoice.get("duenio")).intValue(),
         "Liquidacion de tu venta",
         "Tu pieza se vendio por " + saleAmount + " " + invoice.get("moneda") +
-            ". Cobrado al comprador: " + charged + ". Pendiente: " + pending + ".");
+            ". Recibiste la liquidacion completa." + coverageMessage);
   }
 
   private void ensureSettlementTables() {
