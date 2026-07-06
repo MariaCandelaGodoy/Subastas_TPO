@@ -1,0 +1,42 @@
+CREATE TABLE IF NOT EXISTS cobros_factura (
+  identificador INT NOT NULL AUTO_INCREMENT,
+  factura INT NOT NULL,
+  cliente INT NOT NULL,
+  medio_pago INT NULL,
+  importe_cobrado DECIMAL(18,2) NOT NULL,
+  saldo_pendiente DECIMAL(18,2) NOT NULL,
+  moneda VARCHAR(3) NOT NULL DEFAULT 'ARS',
+  estado VARCHAR(20) NOT NULL,
+  motivo VARCHAR(500) NULL,
+  creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT pk_cobros_factura PRIMARY KEY (identificador),
+  CONSTRAINT chk_cf_importes CHECK (importe_cobrado >= 0 AND saldo_pendiente >= 0),
+  CONSTRAINT chk_cf_estado CHECK (estado IN ('total','parcial','rechazado')),
+  CONSTRAINT fk_cf_factura FOREIGN KEY (factura) REFERENCES facturas_compra(identificador),
+  CONSTRAINT fk_cf_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador),
+  CONSTRAINT fk_cf_medio_pago FOREIGN KEY (medio_pago) REFERENCES medios_pago(identificador)
+);
+
+CREATE TABLE IF NOT EXISTS liquidaciones_duenio (
+  identificador INT NOT NULL AUTO_INCREMENT,
+  registro INT NOT NULL,
+  factura INT NOT NULL,
+  duenio INT NOT NULL,
+  cliente INT NOT NULL,
+  importe_venta DECIMAL(18,2) NOT NULL,
+  comision DECIMAL(18,2) NOT NULL,
+  importe_cobrado DECIMAL(18,2) NOT NULL,
+  saldo_pendiente DECIMAL(18,2) NOT NULL,
+  moneda VARCHAR(3) NOT NULL DEFAULT 'ARS',
+  estado VARCHAR(20) NOT NULL,
+  creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT pk_liquidaciones_duenio PRIMARY KEY (identificador),
+  CONSTRAINT uq_ld_registro UNIQUE (registro),
+  CONSTRAINT chk_ld_importes CHECK (importe_venta > 0 AND comision >= 0 AND importe_cobrado >= 0 AND saldo_pendiente >= 0),
+  CONSTRAINT chk_ld_estado CHECK (estado IN ('cobrada','parcial','pendiente')),
+  CONSTRAINT fk_ld_registro FOREIGN KEY (registro) REFERENCES registroDeSubasta(identificador),
+  CONSTRAINT fk_ld_factura FOREIGN KEY (factura) REFERENCES facturas_compra(identificador),
+  CONSTRAINT fk_ld_duenio FOREIGN KEY (duenio) REFERENCES duenios(identificador),
+  CONSTRAINT fk_ld_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador)
+);

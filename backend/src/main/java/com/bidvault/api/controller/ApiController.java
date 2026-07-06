@@ -1315,7 +1315,7 @@ public class ApiController {
   private Map<String, Object> ensureInvoiceForRegistry(int registroId) {
     var existing = jdbc.queryForList("""
         SELECT fc.identificador, fc.numero, fc.subtotal, fc.comision, fc.costo_envio, fc.total, fc.estado,
-               r.cliente, r.identificador registro, COALESCE(sc.moneda, 'ARS') moneda
+               r.cliente, r.duenio, r.importe, r.identificador registro, COALESCE(sc.moneda, 'ARS') moneda
         FROM facturas_compra fc
         JOIN registroDeSubasta r ON r.identificador=fc.registro
         JOIN subastas s ON s.identificador=r.subasta
@@ -1326,7 +1326,7 @@ public class ApiController {
       return existing.get(0);
     }
     var row = one("""
-        SELECT r.identificador registro, r.cliente, r.importe, r.comision,
+        SELECT r.identificador registro, r.cliente, r.duenio, r.importe, r.comision,
                COALESCE(sc.moneda, 'ARS') moneda
         FROM registroDeSubasta r
         JOIN subastas s ON s.identificador=r.subasta
@@ -1351,12 +1351,15 @@ public class ApiController {
     invoice.put("total", total);
     invoice.put("estado", "pendiente_pago");
     invoice.put("cliente", row.get("cliente"));
+    invoice.put("duenio", row.get("duenio"));
+    invoice.put("importe", row.get("importe"));
     invoice.put("registro", row.get("registro"));
     invoice.put("moneda", row.get("moneda"));
     return invoice;
   }
 
   private Map<String, Object> autoChargeInvoice(int subastaId, Map<String, Object> invoice) {
+    ensureSettlementTables();
     var payments = jdbc.queryForList("""
         SELECT m.identificador, m.verificado, m.tipo, m.moneda, m.monto_reservado,
                COALESCE(m.resultado_pago_simulado, 'aprobado') resultado_pago_simulado
@@ -1367,6 +1370,9 @@ public class ApiController {
         LIMIT 1
         """, invoice.get("cliente"), subastaId);
     if (payments.isEmpty()) {
+      BigDecimal total = (BigDecimal) invoice.get("total");
+      registerInvoiceCharge(invoice, null, BigDecimal.ZERO, total, "rechazado", "Sin medio de pago seleccionado");
+      registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: no hay medio de pago seleccionado para cobrar automaticamente.");
@@ -1378,36 +1384,60 @@ public class ApiController {
     String simulatedResult = Objects.toString(payment.get("resultado_pago_simulado"), "");
     BigDecimal total = (BigDecimal) invoice.get("total");
     if (!"si".equals(payment.get("verificado"))) {
+      registerInvoiceCharge(invoice, payment.get("identificador"), BigDecimal.ZERO, total, "rechazado", "Medio no verificado");
+      registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: el medio de pago elegido no esta verificado.");
     }
     if (!invoiceCurrency.equals(paymentCurrency)) {
+      registerInvoiceCharge(invoice, payment.get("identificador"), BigDecimal.ZERO, total, "rechazado", "Moneda incompatible");
+      registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: el medio elegido no coincide con la moneda " + invoiceCurrency + ".");
     }
     if ("USD".equals(invoiceCurrency) && !("cuenta".equals(paymentType) || "tarjeta".equals(paymentType))) {
+      registerInvoiceCharge(invoice, payment.get("identificador"), BigDecimal.ZERO, total, "rechazado", "Medio no permitido para USD");
+      registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: las subastas en dolares se cobran con transferencia o tarjeta internacional.");
     }
-    boolean simulatedInsufficientFunds = "fondos_insuficientes".equals(simulatedResult);
-    boolean limitInsufficientFunds =
-        payment.get("monto_reservado") != null &&
-        ((BigDecimal) payment.get("monto_reservado")).compareTo(total) < 0;
-    if (simulatedInsufficientFunds || limitInsufficientFunds) {
-      createPaymentFailurePenalty(invoice, "Pago automatico rechazado por fondos insuficientes en la pasarela simulada");
-      BigDecimal penalty = total.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
-      return Map.of(
-          "estado", "multa_generada",
-          "mensaje", "Factura " + invoice.get("numero") + " pendiente. El cobro automatico fue rechazado por fondos insuficientes y se genero una multa de " + penalty + ".");
-    }
     if ("rechazado".equals(simulatedResult)) {
+      registerInvoiceCharge(invoice, payment.get("identificador"), BigDecimal.ZERO, total, "rechazado", "Pago rechazado por la pasarela");
+      registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: la pasarela simulada rechazo el pago con este medio.");
     }
+    BigDecimal available = payment.get("monto_reservado") instanceof BigDecimal value ? value : total;
+    if (available.compareTo(BigDecimal.ZERO) < 0) available = BigDecimal.ZERO;
+    BigDecimal charged = available.min(total);
+    BigDecimal pending = total.subtract(charged).setScale(2, RoundingMode.HALF_UP);
+    boolean insufficientFunds = pending.compareTo(BigDecimal.ZERO) > 0;
+    if (insufficientFunds) {
+      if (charged.compareTo(BigDecimal.ZERO) > 0) {
+        discountPaymentBalance(payment.get("identificador"), charged);
+      }
+      registerInvoiceCharge(invoice, payment.get("identificador"), charged, pending, charged.compareTo(BigDecimal.ZERO) > 0 ? "parcial" : "rechazado",
+          "Fondos insuficientes");
+      registerOwnerSettlement(invoice, charged, pending);
+      jdbc.update("""
+          UPDATE facturas_compra
+          SET medio_pago=?, estado='pendiente_pago'
+          WHERE identificador=?
+          """, payment.get("identificador"), invoice.get("identificador"));
+      createPaymentFailurePenalty(invoice, "Pago automatico rechazado por fondos insuficientes en la pasarela simulada");
+      BigDecimal penalty = total.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
+      return Map.of(
+          "estado", "multa_generada",
+          "mensaje", "Factura " + invoice.get("numero") + ": se cobraron " + charged + " " + invoiceCurrency +
+              ". Queda pendiente " + pending + " " + invoiceCurrency + " mas una multa de " + penalty + ".");
+    }
+    discountPaymentBalance(payment.get("identificador"), total);
+    registerInvoiceCharge(invoice, payment.get("identificador"), total, BigDecimal.ZERO, "total", "Cobro automatico aprobado");
+    registerOwnerSettlement(invoice, total, BigDecimal.ZERO);
     jdbc.update("""
         UPDATE facturas_compra
         SET medio_pago=?, estado='pagada', pagado_en=CURRENT_TIMESTAMP
@@ -1416,6 +1446,97 @@ public class ApiController {
     return Map.of(
         "estado", "pagada",
         "mensaje", "Factura " + invoice.get("numero") + " pagada automaticamente con el medio elegido para la subasta.");
+  }
+
+  private void discountPaymentBalance(Object paymentId, BigDecimal amount) {
+    if (paymentId == null || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return;
+    jdbc.update("""
+        UPDATE medios_pago
+        SET monto_reservado = GREATEST(monto_reservado - ?, 0)
+        WHERE identificador=? AND monto_reservado IS NOT NULL
+        """, amount, paymentId);
+  }
+
+  private void registerInvoiceCharge(Map<String, Object> invoice, Object paymentId, BigDecimal charged, BigDecimal pending, String status, String reason) {
+    ensureSettlementTables();
+    jdbc.update("""
+        INSERT INTO cobros_factura
+        (factura, cliente, medio_pago, importe_cobrado, saldo_pendiente, moneda, estado, motivo)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, invoice.get("identificador"), invoice.get("cliente"), paymentId, charged, pending, invoice.get("moneda"), status, reason);
+  }
+
+  private void registerOwnerSettlement(Map<String, Object> invoice, BigDecimal charged, BigDecimal pending) {
+    ensureSettlementTables();
+    BigDecimal saleAmount = (BigDecimal) invoice.get("importe");
+    BigDecimal commission = (BigDecimal) invoice.get("comision");
+    String status = pending.compareTo(BigDecimal.ZERO) <= 0 ? "cobrada" : charged.compareTo(BigDecimal.ZERO) > 0 ? "parcial" : "pendiente";
+    jdbc.update("""
+        INSERT INTO liquidaciones_duenio
+        (registro, factura, duenio, cliente, importe_venta, comision, importe_cobrado, saldo_pendiente, moneda, estado)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          factura=VALUES(factura),
+          importe_venta=VALUES(importe_venta),
+          comision=VALUES(comision),
+          importe_cobrado=VALUES(importe_cobrado),
+          saldo_pendiente=VALUES(saldo_pendiente),
+          moneda=VALUES(moneda),
+          estado=VALUES(estado)
+        """, invoice.get("registro"), invoice.get("identificador"), invoice.get("duenio"), invoice.get("cliente"),
+        saleAmount, commission, charged, pending, invoice.get("moneda"), status);
+    notifyOwnerIfClient(((Number) invoice.get("duenio")).intValue(),
+        "Liquidacion de tu venta",
+        "Tu pieza se vendio por " + saleAmount + " " + invoice.get("moneda") +
+            ". Cobrado al comprador: " + charged + ". Pendiente: " + pending + ".");
+  }
+
+  private void ensureSettlementTables() {
+    jdbc.execute("""
+        CREATE TABLE IF NOT EXISTS cobros_factura (
+          identificador INT NOT NULL AUTO_INCREMENT,
+          factura INT NOT NULL,
+          cliente INT NOT NULL,
+          medio_pago INT NULL,
+          importe_cobrado DECIMAL(18,2) NOT NULL,
+          saldo_pendiente DECIMAL(18,2) NOT NULL,
+          moneda VARCHAR(3) NOT NULL DEFAULT 'ARS',
+          estado VARCHAR(20) NOT NULL,
+          motivo VARCHAR(500) NULL,
+          creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT pk_cobros_factura PRIMARY KEY (identificador),
+          CONSTRAINT chk_cf_importes CHECK (importe_cobrado >= 0 AND saldo_pendiente >= 0),
+          CONSTRAINT chk_cf_estado CHECK (estado IN ('total','parcial','rechazado')),
+          CONSTRAINT fk_cf_factura FOREIGN KEY (factura) REFERENCES facturas_compra(identificador),
+          CONSTRAINT fk_cf_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador),
+          CONSTRAINT fk_cf_medio_pago FOREIGN KEY (medio_pago) REFERENCES medios_pago(identificador)
+        )
+        """);
+    jdbc.execute("""
+        CREATE TABLE IF NOT EXISTS liquidaciones_duenio (
+          identificador INT NOT NULL AUTO_INCREMENT,
+          registro INT NOT NULL,
+          factura INT NOT NULL,
+          duenio INT NOT NULL,
+          cliente INT NOT NULL,
+          importe_venta DECIMAL(18,2) NOT NULL,
+          comision DECIMAL(18,2) NOT NULL,
+          importe_cobrado DECIMAL(18,2) NOT NULL,
+          saldo_pendiente DECIMAL(18,2) NOT NULL,
+          moneda VARCHAR(3) NOT NULL DEFAULT 'ARS',
+          estado VARCHAR(20) NOT NULL,
+          creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          CONSTRAINT pk_liquidaciones_duenio PRIMARY KEY (identificador),
+          CONSTRAINT uq_ld_registro UNIQUE (registro),
+          CONSTRAINT chk_ld_importes CHECK (importe_venta > 0 AND comision >= 0 AND importe_cobrado >= 0 AND saldo_pendiente >= 0),
+          CONSTRAINT chk_ld_estado CHECK (estado IN ('cobrada','parcial','pendiente')),
+          CONSTRAINT fk_ld_registro FOREIGN KEY (registro) REFERENCES registroDeSubasta(identificador),
+          CONSTRAINT fk_ld_factura FOREIGN KEY (factura) REFERENCES facturas_compra(identificador),
+          CONSTRAINT fk_ld_duenio FOREIGN KEY (duenio) REFERENCES duenios(identificador),
+          CONSTRAINT fk_ld_cliente FOREIGN KEY (cliente) REFERENCES clientes(identificador)
+        )
+        """);
   }
 
   private void createPaymentFailurePenalty(Map<String, Object> invoice, String reason) {
