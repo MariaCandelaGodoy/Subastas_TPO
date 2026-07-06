@@ -2113,6 +2113,8 @@ function PieceRequestCard({ piece, onAccept, onReject, onCustody }: { piece: any
   const motivo = String(piece.motivoRechazo ?? '').toLowerCase();
   const hasProposal = status === 'en_revision' && Boolean(piece.propuestaId) && piece.propuestaEstado === 'pendiente_usuario';
   const hasReturnCharge = status === 'devuelto' && motivo.includes('devolucion con cargo');
+  const shouldShowDeliveryAddress = status === 'pendiente' || status === 'en_revision';
+  const deliveryAddress = 'Enviá o acercá el producto a Av. Corrientes 1234, CABA, lunes a viernes de 9 a 18 hs.';
   const formatDate = (value?: string) => {
     const [year, month, day] = String(value || '').split('-');
     return year && month && day ? `${day}/${month}/${year}` : value ?? '';
@@ -2131,8 +2133,14 @@ function PieceRequestCard({ piece, onAccept, onReject, onCustody }: { piece: any
             <ProposalDatum label="Precio" value={`$ ${Number(piece.precioBase ?? 0).toLocaleString()} ${piece.moneda ?? ''}`} />
             <ProposalDatum label="Comisión" value={`${Number(piece.comision ?? 0)}%`} />
           </View>
-          <Text style={styles.proposalPolicy}>Póliza de seguro <Text style={styles.nextStrong}>{piece.polizaCompania ?? ''} {piece.polizaNumero ?? piece.seguro ?? ''}</Text> <Text style={styles.successText}>{piece.polizaCobertura ?? ''}</Text></Text>
-          <Pressable onPress={onCustody} style={styles.secondaryButton}><Ionicons name="shield-checkmark-outline" size={20} color={colors.burgundy} /><Text style={styles.secondaryButtonText}>Ver depósito y seguro</Text></Pressable>
+          {shouldShowDeliveryAddress ? (
+            <Text style={styles.proposalPolicy}>{deliveryAddress}</Text>
+          ) : (
+            <>
+              <Text style={styles.proposalPolicy}>Póliza de seguro <Text style={styles.nextStrong}>{piece.polizaCompania ?? ''} {piece.polizaNumero ?? piece.seguro ?? ''}</Text> <Text style={styles.successText}>{piece.polizaCobertura ?? ''}</Text></Text>
+              <Pressable onPress={onCustody} style={styles.secondaryButton}><Ionicons name="shield-checkmark-outline" size={20} color={colors.burgundy} /><Text style={styles.secondaryButtonText}>Ver depósito y seguro</Text></Pressable>
+            </>
+          )}
           <PrimaryButton label="Aceptar Propuesta" onPress={onAccept ?? (() => undefined)} />
           <Pressable onPress={onReject} style={styles.cancelButton}><Text style={styles.cancelText}>Rechazar</Text></Pressable>
         </>
@@ -2141,9 +2149,15 @@ function PieceRequestCard({ piece, onAccept, onReject, onCustody }: { piece: any
           <Text style={styles.verified}>Estado: {String(piece.estado).replace('_', ' ').toUpperCase()}</Text>
           {hasReturnCharge ? <Text style={styles.verified}>Cargo por devolución pendiente</Text> : null}
           {piece.motivoRechazo ? <Text style={styles.description}>Motivo: {piece.motivoRechazo}</Text> : null}
-          {piece.seguro ? <Text style={styles.description}>Póliza: {piece.seguro}</Text> : null}
-          {piece.deposito ? <Text style={styles.description}>Depósito del bien: {piece.deposito}</Text> : null}
-          <Pressable onPress={onCustody} style={styles.secondaryButton}><Ionicons name="shield-checkmark-outline" size={20} color={colors.burgundy} /><Text style={styles.secondaryButtonText}>Ver depósito y seguro</Text></Pressable>
+          {shouldShowDeliveryAddress ? (
+            <Text style={styles.description}>{deliveryAddress}</Text>
+          ) : (
+            <>
+              {piece.seguro ? <Text style={styles.description}>Póliza: {piece.seguro}</Text> : null}
+              {piece.deposito ? <Text style={styles.description}>Depósito del bien: {piece.deposito}</Text> : null}
+              <Pressable onPress={onCustody} style={styles.secondaryButton}><Ionicons name="shield-checkmark-outline" size={20} color={colors.burgundy} /><Text style={styles.secondaryButtonText}>Ver depósito y seguro</Text></Pressable>
+            </>
+          )}
         </>
       )}
     </View>
