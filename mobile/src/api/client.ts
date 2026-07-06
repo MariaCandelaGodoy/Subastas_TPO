@@ -92,7 +92,7 @@ export type ProductItem = {
   ofertaMaxima?: number | null;
   vendido: boolean;
   itemEstado: 'en_espera' | 'en_vivo' | 'cerrado';
-  itemTiempoRestanteSegundos: number;
+  itemTiempoRestanteSegundos: number | null;
   cierraEn?: string | null;
   imagenes: string[];
   duenio: string;
@@ -194,7 +194,9 @@ function mapProduct(raw: any, auction: AuctionSummary): ProductItem {
     ofertaMaxima: isPremium ? null : Math.round(best + base * 0.2),
     vendido: raw.subastado === 'si',
     itemEstado: raw.item_estado ?? raw.itemEstado ?? (raw.subastado === 'si' ? 'cerrado' : 'en_espera'),
-    itemTiempoRestanteSegundos: Number(raw.item_tiempo_restante_segundos ?? raw.itemTiempoRestanteSegundos ?? 0),
+    itemTiempoRestanteSegundos: raw.item_tiempo_restante_segundos == null && raw.itemTiempoRestanteSegundos == null
+      ? null
+      : Number(raw.item_tiempo_restante_segundos ?? raw.itemTiempoRestanteSegundos),
     cierraEn: raw.cierra_en ?? raw.cierraEn ?? null,
     imagenes: Array.isArray(raw.imagenes) && raw.imagenes.length ? raw.imagenes : raw.imagen ? [raw.imagen] : [],
     duenio: raw.duenio_nombre ?? raw.duenio ?? '',
