@@ -1515,6 +1515,10 @@ public class ApiController {
             actualizado_en=CURRENT_TIMESTAMP
         WHERE item=?
         """, itemId);
+    if (countActiveSpectators(subastaId) > 0) {
+      startLiveItemTimerIfNeeded(subastaId);
+      return;
+    }
     realtimeHub.publish(subastaId, Map.of("tipo", "ITEM_EN_VIVO", "subastaId", subastaId, "itemId", itemId,
         "itemTiempoRestanteSegundos", itemRemainingSeconds(itemId)));
   }
