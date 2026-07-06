@@ -802,19 +802,14 @@ public class ApiController {
 
   @GetMapping("/penalties")
   List<Map<String, Object>> penalties(@RequestParam int userId) {
-    refreshOverduePenalties();
     return jdbc.queryForList("""
         SELECT m.identificador id, m.factura factura_id, m.registro registro_id, m.importe_base,
                m.importe_multa, m.vencimiento, m.estado, m.motivo, m.creado_en, m.pagado_en,
-               COALESCE(sc.moneda, 'ARS') moneda,
-               COALESCE(p.descripcionCatalogo, CONCAT('Factura #', m.factura)) producto
+               'ARS' moneda,
+               CONCAT('Factura #', m.factura) producto
         FROM multas_incumplimiento m
-        LEFT JOIN registroDeSubasta r ON r.identificador=m.registro
-        LEFT JOIN subastas s ON s.identificador=r.subasta
-        LEFT JOIN subastas_config sc ON sc.subasta=s.identificador
-        LEFT JOIN productos p ON p.identificador=r.producto
         WHERE m.cliente=?
-        ORDER BY m.estado='pendiente' DESC, m.estado='derivada_justicia' DESC, m.creado_en DESC
+        ORDER BY m.creado_en DESC
         """, userId);
   }
 
@@ -938,11 +933,8 @@ public class ApiController {
   Map<String, Object> payPenalty(@PathVariable int penaltyId, @RequestBody PayInvoiceRequest request) {
     var penalty = one("""
         SELECT m.identificador, m.cliente, m.importe_multa, m.estado,
-               COALESCE(sc.moneda, 'ARS') moneda
+               'ARS' moneda
         FROM multas_incumplimiento m
-        LEFT JOIN registroDeSubasta r ON r.identificador=m.registro
-        LEFT JOIN subastas s ON s.identificador=r.subasta
-        LEFT JOIN subastas_config sc ON sc.subasta=s.identificador
         WHERE m.identificador=?
         """, "Multa no encontrada", penaltyId);
     if (((Number) penalty.get("cliente")).intValue() != request.userId()) {
@@ -988,11 +980,8 @@ public class ApiController {
     return one("""
         SELECT m.identificador id, m.factura factura_id, m.registro registro_id, m.importe_base,
                m.importe_multa, m.vencimiento, m.estado, m.motivo, m.creado_en, m.pagado_en,
-               COALESCE(sc.moneda, 'ARS') moneda
+               'ARS' moneda
         FROM multas_incumplimiento m
-        LEFT JOIN registroDeSubasta r ON r.identificador=m.registro
-        LEFT JOIN subastas s ON s.identificador=r.subasta
-        LEFT JOIN subastas_config sc ON sc.subasta=s.identificador
         WHERE m.identificador=?
         """, "Multa no encontrada", penaltyId);
   }
