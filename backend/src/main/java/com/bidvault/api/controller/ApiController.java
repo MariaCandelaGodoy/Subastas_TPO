@@ -493,6 +493,7 @@ public class ApiController {
         WHERE p.item=? ORDER BY p.importe DESC, p.identificador DESC LIMIT 1
         """, itemId);
     if (winner.isEmpty()) {
+      int companyId = ensureCompanyBuyerClient();
       BigDecimal importe = (BigDecimal) item.get("precioBase");
       BigDecimal comisionPct = (BigDecimal) item.get("comision");
       BigDecimal comision = importe.multiply(comisionPct).setScale(2, RoundingMode.HALF_UP);
@@ -502,13 +503,14 @@ public class ApiController {
           SET estado='cerrado', cerrado_en=NOW(), cierra_en=NULL, actualizado_en=CURRENT_TIMESTAMP
           WHERE item=?
           """, itemId);
-      jdbc.update("UPDATE productos SET disponible='no' WHERE identificador=?", item.get("producto"));
+      jdbc.update("UPDATE productos SET disponible='no', duenio=? WHERE identificador=?", companyId, item.get("producto"));
       notifyOwnerIfClient(((Number) item.get("duenio")).intValue(),
           "La empresa tomo tu pieza",
           "No hubo pujas. BidVault tomo el bien por el precio base: " + importe + ".");
       var result = new java.util.LinkedHashMap<String, Object>();
       result.put("registro_id", 0);
       result.put("item_id", itemId);
+      result.put("cliente_id", companyId);
       result.put("importe", importe);
       result.put("comision", comision);
       result.put("empresa_compra", true);
@@ -1380,7 +1382,11 @@ public class ApiController {
         JOIN personas p ON p.identificador=c.identificador
         WHERE p.documento='EMPRESA-BIDVAULT'
         """);
-    if (!rows.isEmpty()) return ((Number) rows.get(0).get("identificador")).intValue();
+    if (!rows.isEmpty()) {
+      int companyId = ((Number) rows.get(0).get("identificador")).intValue();
+      ensureCompanyOwner(companyId);
+      return companyId;
+    }
     int personaId = insertAndReturnKey("""
         INSERT INTO personas (documento, nombre, direccion, estado)
         VALUES ('EMPRESA-BIDVAULT', 'BidVault Empresa', 'Galeria Central', 'activo')
@@ -1389,7 +1395,16 @@ public class ApiController {
         INSERT INTO clientes (identificador, numeroPais, admitido, categoria, verificador)
         VALUES (?, 1, 'si', 'platino', 1)
         """, personaId);
+    ensureCompanyOwner(personaId);
     return personaId;
+  }
+
+  private void ensureCompanyOwner(int companyId) {
+    jdbc.update("""
+        INSERT INTO duenios (identificador, numeroPais, verificacionFinanciera, verificacionJudicial, calificacionRiesgo, verificador)
+        SELECT ?, 1, 'si', 'si', 1, 1
+        WHERE NOT EXISTS (SELECT 1 FROM duenios WHERE identificador=?)
+        """, companyId, companyId);
   }
 
   private void notifyOwnerIfClient(int ownerId, String title, String body) {
