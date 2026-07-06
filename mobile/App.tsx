@@ -736,18 +736,31 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     );
     return hasMoreLots;
   };
-  const showCloseOutcomeAlert = (closedItemId: number, data: AuctionDetail, winnerClientId?: unknown, winningAmount?: unknown) => {
+  const showCloseOutcomeAlert = (closedItemId: number, data: AuctionDetail, outcome: any = {}) => {
     const hasMoreLots = data.products.some((item) => item.id !== closedItemId && !item.vendido && item.itemEstado !== 'cerrado');
+    const winnerClientId = outcome.clienteId ?? outcome.cliente_id;
+    const winningAmount = outcome.importe;
     const userWon = session && Number(winnerClientId) === session.userId;
     if (!userWon) return showLotClosedAlert(closedItemId, data);
     if (alertedItemRef.current === closedItemId) return hasMoreLots;
     alertedItemRef.current = closedItemId;
     const amountText = Number(winningAmount) > 0 ? ` por $ ${Number(winningAmount).toLocaleString()} ${data.auction.moneda}` : '';
+    const charged = Number(outcome.importeCobrado ?? outcome.importe_cobrado ?? 0);
+    const pending = Number(outcome.saldoPendiente ?? outcome.saldo_pendiente ?? 0);
+    const penalty = Number(outcome.multaImporte ?? outcome.multa_importe ?? 0);
+    const paymentStatus = String(outcome.pagoEstado ?? outcome.pago_estado ?? '');
+    const paymentText = pending > 0 || penalty > 0
+      ? charged > 0
+        ? `\n\nSe cobraron $ ${charged.toLocaleString()} ${data.auction.moneda}. Debés $ ${pending.toLocaleString()} ${data.auction.moneda}${penalty > 0 ? ` + multa de $ ${penalty.toLocaleString()} ${data.auction.moneda}` : ''}.`
+        : `\n\nNo se cobró nada por fondos insuficientes. Debés $ ${pending.toLocaleString()} ${data.auction.moneda}${penalty > 0 ? ` + multa de $ ${penalty.toLocaleString()} ${data.auction.moneda}` : ''}.`
+      : paymentStatus
+        ? `\n\nEl cobro automático quedó ${paymentStatus === 'pagada' ? 'pagado' : paymentStatus}.`
+        : '';
     Alert.alert(
       'Ganaste la subasta',
       hasMoreLots
-        ? `Ganaste este lote${amountText}. Hay más productos disponibles. ¿Querés quedarte en la sala?`
-        : `Ganaste este lote${amountText}. No quedan más productos disponibles.`,
+        ? `Ganaste este lote${amountText}.${paymentText}\n\nHay más productos disponibles. ¿Querés quedarte en la sala?`
+        : `Ganaste este lote${amountText}.${paymentText}\n\nNo quedan más productos disponibles.`,
       hasMoreLots
         ? [
             { text: 'Quedarme', style: 'cancel' },
@@ -792,7 +805,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
           }
         } else if (event.tipo === 'ITEM_CERRADO') {
           const data = await load(true);
-          const hasMoreLots = showCloseOutcomeAlert(Number(event.itemId), data, event.clienteId, event.importe);
+          const hasMoreLots = showCloseOutcomeAlert(Number(event.itemId), data, event);
           setLiveStatus(hasMoreLots ? 'Lote cerrado. Buscando siguiente pieza...' : 'Subasta finalizada');
         } else if (event.tipo === 'ITEM_EN_VIVO') {
           await load(true);
@@ -818,7 +831,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     api.closeItem(auctionId, selected.id)
       .then((result: any) => load(true).then((data) => ({ data, result })))
       .then(({ data, result }) => {
-        const hasMoreLots = showCloseOutcomeAlert(selected.id, data, result?.cliente_id, result?.importe);
+        const hasMoreLots = showCloseOutcomeAlert(selected.id, data, result);
         setLiveStatus(hasMoreLots ? 'Lote cerrado. Buscando siguiente pieza...' : 'Subasta finalizada');
       })
       .catch(() => {

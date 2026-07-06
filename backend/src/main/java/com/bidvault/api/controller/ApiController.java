@@ -552,8 +552,18 @@ public class ApiController {
         JOIN asistentes a ON a.identificador=p.asistente
         WHERE p.item=? AND a.cliente<>?
         """, importe, itemId, w.get("cliente"));
-    return Map.of("registro_id", registro, "cliente_id", w.get("cliente"), "importe", importe, "comision", comision,
-        "empresa_compra", empresaCompra, "factura_id", invoice.get("identificador"), "pago_estado", charge.get("estado"));
+    var result = new java.util.LinkedHashMap<String, Object>();
+    result.put("registro_id", registro);
+    result.put("cliente_id", w.get("cliente"));
+    result.put("importe", importe);
+    result.put("comision", comision);
+    result.put("empresa_compra", empresaCompra);
+    result.put("factura_id", invoice.get("identificador"));
+    result.put("pago_estado", charge.get("estado"));
+    result.put("importe_cobrado", charge.get("importe_cobrado"));
+    result.put("saldo_pendiente", charge.get("saldo_pendiente"));
+    result.put("multa_importe", charge.get("multa_importe"));
+    return result;
   }
 
   @GetMapping("/payments/{clienteId}")
@@ -1241,6 +1251,11 @@ public class ApiController {
     event.put("clienteId", result.get("cliente_id"));
     event.put("importe", result.get("importe"));
     event.put("empresaCompra", result.get("empresa_compra"));
+    event.put("facturaId", result.get("factura_id"));
+    event.put("pagoEstado", result.get("pago_estado"));
+    event.put("importeCobrado", result.get("importe_cobrado"));
+    event.put("saldoPendiente", result.get("saldo_pendiente"));
+    event.put("multaImporte", result.get("multa_importe"));
     realtimeHub.publish(subastaId, event);
   }
 
@@ -1375,6 +1390,9 @@ public class ApiController {
       registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
+          "importe_cobrado", BigDecimal.ZERO,
+          "saldo_pendiente", total,
+          "multa_importe", BigDecimal.ZERO,
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: no hay medio de pago seleccionado para cobrar automaticamente.");
     }
     var payment = payments.get(0);
@@ -1388,6 +1406,9 @@ public class ApiController {
       registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
+          "importe_cobrado", BigDecimal.ZERO,
+          "saldo_pendiente", total,
+          "multa_importe", BigDecimal.ZERO,
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: el medio de pago elegido no esta verificado.");
     }
     if (!invoiceCurrency.equals(paymentCurrency)) {
@@ -1395,6 +1416,9 @@ public class ApiController {
       registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
+          "importe_cobrado", BigDecimal.ZERO,
+          "saldo_pendiente", total,
+          "multa_importe", BigDecimal.ZERO,
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: el medio elegido no coincide con la moneda " + invoiceCurrency + ".");
     }
     if ("USD".equals(invoiceCurrency) && !("cuenta".equals(paymentType) || "tarjeta".equals(paymentType))) {
@@ -1402,6 +1426,9 @@ public class ApiController {
       registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
+          "importe_cobrado", BigDecimal.ZERO,
+          "saldo_pendiente", total,
+          "multa_importe", BigDecimal.ZERO,
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: las subastas en dolares se cobran con transferencia o tarjeta internacional.");
     }
     if ("rechazado".equals(simulatedResult)) {
@@ -1409,20 +1436,17 @@ public class ApiController {
       registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       return Map.of(
           "estado", "pendiente_pago",
+          "importe_cobrado", BigDecimal.ZERO,
+          "saldo_pendiente", total,
+          "multa_importe", BigDecimal.ZERO,
           "mensaje", "Factura " + invoice.get("numero") + " pendiente: la pasarela simulada rechazo el pago con este medio.");
     }
     BigDecimal available = payment.get("monto_reservado") instanceof BigDecimal value ? value : total;
     if (available.compareTo(BigDecimal.ZERO) < 0) available = BigDecimal.ZERO;
-    BigDecimal charged = available.min(total);
-    BigDecimal pending = total.subtract(charged).setScale(2, RoundingMode.HALF_UP);
-    boolean insufficientFunds = pending.compareTo(BigDecimal.ZERO) > 0;
+    boolean insufficientFunds = available.compareTo(total) < 0;
     if (insufficientFunds) {
-      if (charged.compareTo(BigDecimal.ZERO) > 0) {
-        discountPaymentBalance(payment.get("identificador"), charged);
-      }
-      registerInvoiceCharge(invoice, payment.get("identificador"), charged, pending, charged.compareTo(BigDecimal.ZERO) > 0 ? "parcial" : "rechazado",
-          "Fondos insuficientes");
-      registerOwnerSettlement(invoice, charged, pending);
+      registerInvoiceCharge(invoice, payment.get("identificador"), BigDecimal.ZERO, total, "rechazado", "Fondos insuficientes");
+      registerOwnerSettlement(invoice, BigDecimal.ZERO, total);
       jdbc.update("""
           UPDATE facturas_compra
           SET medio_pago=?, estado='pendiente_pago'
@@ -1432,8 +1456,11 @@ public class ApiController {
       BigDecimal penalty = total.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
       return Map.of(
           "estado", "multa_generada",
-          "mensaje", "Factura " + invoice.get("numero") + ": se cobraron " + charged + " " + invoiceCurrency +
-              ". Queda pendiente " + pending + " " + invoiceCurrency + " mas una multa de " + penalty + ".");
+          "importe_cobrado", BigDecimal.ZERO,
+          "saldo_pendiente", total,
+          "multa_importe", penalty,
+          "mensaje", "Factura " + invoice.get("numero") + ": el cobro automatico fue rechazado por fondos insuficientes. Debe " +
+              total + " " + invoiceCurrency + " mas una multa de " + penalty + ".");
     }
     discountPaymentBalance(payment.get("identificador"), total);
     registerInvoiceCharge(invoice, payment.get("identificador"), total, BigDecimal.ZERO, "total", "Cobro automatico aprobado");
@@ -1445,6 +1472,9 @@ public class ApiController {
         """, payment.get("identificador"), invoice.get("identificador"));
     return Map.of(
         "estado", "pagada",
+        "importe_cobrado", total,
+        "saldo_pendiente", BigDecimal.ZERO,
+        "multa_importe", BigDecimal.ZERO,
         "mensaje", "Factura " + invoice.get("numero") + " pagada automaticamente con el medio elegido para la subasta.");
   }
 
