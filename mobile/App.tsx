@@ -528,7 +528,7 @@ function AuctionDetailScreen({
     api.auction(auctionId, session?.userId).then((data) => {
       setDetail(data);
       setFavorite(data.auction.favorito);
-    }).catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.'));
+    }).catch((error) => Alert.alert('Error', error instanceof Error ? error.message : 'No se pudo cargar la subasta.'));
   }, [auctionId, session?.userId]);
 
   if (!detail) {

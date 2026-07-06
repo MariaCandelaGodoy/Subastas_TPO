@@ -284,7 +284,6 @@ public class ApiController {
         """, clienteId, id);
     if (rows.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "Subasta no encontrada");
     if ("abierta".equals(rows.get(0).get("estado_config"))) {
-      closeExpiredItemsForAuction(id);
       ensureLiveItem(id);
       if (finishAuctionIfAllItemsClosed(id)) {
         rows.get(0).put("estado", "carrada");
