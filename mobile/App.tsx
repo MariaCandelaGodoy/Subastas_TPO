@@ -1231,7 +1231,36 @@ function NotificationsScreen({ session, onSettings, onCoordinate, onTrack }: { s
 function ProfileScreen({ session, onMetrics, onSettings }: { session: UserSession | null; onMetrics: () => void; onSettings: () => void }) {
   const [metrics, setMetrics] = useState<any | null>(null);
   const [profileTab, setProfileTab] = useState<'GANADAS' | 'PARTICIPADAS'>('GANADAS');
+  const [expandedAuctionId, setExpandedAuctionId] = useState<number | null>(null);
+  const [bidHistory, setBidHistory] = useState<Record<number, any[]>>({});
+  const [loadingBids, setLoadingBids] = useState<number | null>(null);
   useEffect(() => { if (session) api.metrics(session.userId).then(setMetrics); }, [session]);
+  const visibleHistory = metrics?.history?.filter((item: any) => profileTab === 'GANADAS' ? item.ganador === 'si' : true) ?? [];
+  const toggleParticipation = async (item: any) => {
+    const auctionId = Number(item.subasta_id);
+    if (!session || !auctionId) return;
+    if (expandedAuctionId === auctionId) {
+      setExpandedAuctionId(null);
+      return;
+    }
+    setExpandedAuctionId(auctionId);
+    const embeddedBids = Array.isArray(item.bids) ? item.bids : [];
+    if (embeddedBids.length >= Number(item.pujas ?? 0)) {
+      setBidHistory((current) => ({ ...current, [auctionId]: embeddedBids }));
+      return;
+    }
+    if (bidHistory[auctionId]) return;
+    setLoadingBids(auctionId);
+    try {
+      const bids = await api.participationBids(session.userId, auctionId);
+      setBidHistory((current) => ({ ...current, [auctionId]: bids }));
+    } catch (error) {
+      Alert.alert('Historial no disponible', error instanceof Error ? error.message : 'No pudimos cargar tus pujas.');
+      setExpandedAuctionId(null);
+    } finally {
+      setLoadingBids(null);
+    }
+  };
   return (
     <Screen style={styles.configScreen}>
       <View style={styles.profileHero}>
@@ -1257,10 +1286,17 @@ function ProfileScreen({ session, onMetrics, onSettings }: { session: UserSessio
           </Pressable>
         ))}
       </View>
-      {metrics?.history?.filter((item: any) => profileTab === 'GANADAS' ? item.ganador === 'si' : true).map((item: any) => (
-        <ProfileBidCard key={`${item.subasta_id}-${item.item_id}-${item.importe}`} item={item} />
+      {visibleHistory.map((item: any) => (
+        <ProfileBidCard
+          key={`${item.subasta_id}`}
+          item={item}
+          expanded={expandedAuctionId === Number(item.subasta_id)}
+          bids={bidHistory[Number(item.subasta_id)] ?? []}
+          loading={loadingBids === Number(item.subasta_id)}
+          onPress={() => toggleParticipation(item)}
+        />
       ))}
-      {metrics && (!metrics.history || metrics.history.length === 0) ? <Text style={styles.emptyText}>No hay participaciones registradas en la base.</Text> : null}
+      {metrics && visibleHistory.length === 0 ? <Text style={styles.emptyText}>No hay participaciones registradas en la base.</Text> : null}
     </Screen>
   );
 }
@@ -1509,18 +1545,36 @@ function MetricsScreen({ session, onBack }: { session: UserSession; onBack: () =
   );
 }
 
-function ProfileBidCard({ item }: { item: any }) {
+function ProfileBidCard({ item, expanded, bids, loading, onPress }: { item: any; expanded: boolean; bids: any[]; loading: boolean; onPress: () => void }) {
   return (
-    <View style={styles.profilePieceCard}>
+    <Pressable onPress={onPress} style={styles.profilePieceCard}>
       <View style={styles.profilePieceTitleRow}>
         <Text style={styles.profilePieceTitle}>{item.subasta}</Text>
-        <Text style={styles.verified}>{item.ganador === 'si' ? 'GANADA' : 'PARTICIPADA'}</Text>
+        <View style={styles.profilePieceStatus}>
+          <Text style={styles.verified}>{item.ganador === 'si' ? 'GANADA' : 'PARTICIPADA'}</Text>
+          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.success} />
+        </View>
       </View>
       <View style={styles.profilePieceFooter}>
-        <Text style={styles.profilePieceDesc}>Ítem #{item.item_id}</Text>
-        <Text style={styles.profilePiecePrice}>Oferta{"\n"}${Number(item.importe).toLocaleString()}</Text>
+        <Text style={styles.profilePieceDesc}>{Number(item.pujas ?? 0)} pujas · {Number(item.items_participados ?? 0)} piezas</Text>
+        <Text style={styles.profilePiecePrice}>{item.importe == null ? 'Sin ofertas' : `Última oferta\n$${Number(item.importe).toLocaleString()}`}</Text>
       </View>
-    </View>
+      {expanded ? (
+        <View style={styles.profileBidHistory}>
+          {loading ? <ActivityIndicator color={colors.burgundy} /> : null}
+          {!loading && bids.map((bid, index) => (
+            <View key={`${bid.puja_id ?? index}-${bid.item_id ?? 'item'}`} style={styles.profileBidRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.profileBidProduct}>{bid.producto}</Text>
+                <Text style={styles.profileBidMeta}>Ítem #{bid.item_id} · Puja #{bid.puja_id}</Text>
+              </View>
+              <Text style={styles.profileBidAmount}>${Number(bid.importe).toLocaleString()}</Text>
+            </View>
+          ))}
+          {!loading && bids.length === 0 ? <Text style={styles.profilePieceDesc}>No hay pujas para mostrar.</Text> : null}
+        </View>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -2364,9 +2418,15 @@ const styles = StyleSheet.create({
   profilePieceImage: { height: 156, borderRadius: 5, marginBottom: 10 },
   profilePieceTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 },
   profilePieceTitle: { color: colors.ink, fontSize: 22, lineHeight: 22, fontWeight: '900', flex: 1 },
+  profilePieceStatus: { alignItems: 'flex-end', gap: 2 },
   profilePieceFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12 },
   profilePieceDesc: { color: colors.muted, fontSize: 12, lineHeight: 14, flex: 1 },
   profilePiecePrice: { color: colors.burgundy, fontSize: 12, fontWeight: '900', textAlign: 'right' },
+  profileBidHistory: { marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#D8CFB8', gap: 8 },
+  profileBidRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingVertical: 6 },
+  profileBidProduct: { color: colors.ink, fontSize: 13, fontWeight: '800' },
+  profileBidMeta: { color: colors.muted, fontSize: 11, marginTop: 2 },
+  profileBidAmount: { color: colors.burgundy, fontSize: 13, fontWeight: '900', textAlign: 'right' },
   metricsCards: { flexDirection: 'row', flexWrap: 'wrap', gap: 22, marginBottom: 26, justifyContent: 'center' },
   metricBox: { width: '42%', minHeight: 76, backgroundColor: '#D4CAB0', borderLeftWidth: 3, borderLeftColor: colors.burgundy, borderRadius: 4, alignItems: 'center', justifyContent: 'center', ...shadow },
   metricBoxAccent: { backgroundColor: '#C98C91' },

@@ -629,19 +629,52 @@ public class ApiController {
                (SELECT COUNT(*) FROM asistentes a WHERE a.cliente=c.identificador) subastas_asistidas,
                (SELECT COUNT(*) FROM pujos pu JOIN asistentes a ON a.identificador=pu.asistente WHERE a.cliente=c.identificador AND pu.ganador='si') subastas_ganadas,
                (SELECT COUNT(*) FROM pujos pu JOIN asistentes a ON a.identificador=pu.asistente WHERE a.cliente=c.identificador) pujas_realizadas,
+               (SELECT COALESCE(SUM(pu.importe), 0) FROM pujos pu JOIN asistentes a ON a.identificador=pu.asistente WHERE a.cliente=c.identificador) total_ofertado,
                (SELECT COALESCE(SUM(r.importe + r.comision), 0) FROM registroDeSubasta r WHERE r.cliente=c.identificador) total_pagado
         FROM clientes c JOIN personas p ON p.identificador=c.identificador
         WHERE c.identificador=?
         """, "Cliente no encontrado", clienteId);
     var history = jdbc.queryForList("""
-        SELECT s.identificador subasta_id, ca.descripcion subasta, i.identificador item_id, pu.importe, pu.ganador
-        FROM pujos pu
-        JOIN asistentes a ON a.identificador=pu.asistente
-        JOIN itemsCatalogo i ON i.identificador=pu.item
-        JOIN catalogos ca ON ca.identificador=i.catalogo
-        JOIN subastas s ON s.identificador=ca.subasta
-        WHERE a.cliente=? ORDER BY pu.identificador DESC
-        """, clienteId);
+        SELECT h.subasta_id,
+               h.subasta,
+               pu.item item_id,
+               pu.importe,
+               CASE WHEN h.ganadas > 0 THEN 'si' ELSE 'no' END ganador,
+               h.pujas,
+               h.items_participados
+        FROM (
+          SELECT ps.subasta_id,
+                 COALESCE(MIN(ca.descripcion), CONCAT('Subasta #', ps.subasta_id)) subasta,
+                 MAX(pu.identificador) ultima_puja_id,
+                 COUNT(DISTINCT pu.identificador) pujas,
+                 COUNT(DISTINCT pu.item) items_participados,
+                 COALESCE(MAX(CASE WHEN pu.ganador='si' THEN 1 ELSE 0 END), 0) ganadas
+          FROM (
+            SELECT a.subasta subasta_id
+            FROM asistentes a
+            WHERE a.cliente=?
+            UNION
+            SELECT ca.subasta subasta_id
+            FROM pujos pu
+            JOIN asistentes a ON a.identificador=pu.asistente
+            JOIN itemsCatalogo i ON i.identificador=pu.item
+            JOIN catalogos ca ON ca.identificador=i.catalogo
+            WHERE a.cliente=?
+          ) ps
+          LEFT JOIN subastas s ON s.identificador=ps.subasta_id
+          LEFT JOIN catalogos ca ON ca.subasta=s.identificador
+          LEFT JOIN (
+            SELECT pu.identificador, pu.item, pu.ganador, ab.cliente, ca2.subasta
+            FROM pujos pu
+            JOIN asistentes ab ON ab.identificador=pu.asistente
+            JOIN itemsCatalogo i2 ON i2.identificador=pu.item
+            JOIN catalogos ca2 ON ca2.identificador=i2.catalogo
+          ) pu ON pu.cliente=? AND pu.subasta=ps.subasta_id
+          GROUP BY ps.subasta_id
+        ) h
+        LEFT JOIN pujos pu ON pu.identificador=h.ultima_puja_id
+        ORDER BY COALESCE(h.ultima_puja_id, 0) DESC, h.subasta_id DESC
+        """, clienteId, clienteId, clienteId);
     var categoryRows = jdbc.queryForList("""
         SELECT s.categoria,
                COUNT(*) participaciones,
@@ -663,6 +696,26 @@ public class ApiController {
       metrics.put("exito_" + category, percent);
     }
     return Map.of("profile", metrics, "history", history);
+  }
+
+  @GetMapping("/profile/{clienteId}/participations/{subastaId}/bids")
+  List<Map<String, Object>> participationBids(@PathVariable int clienteId, @PathVariable int subastaId) {
+    ensureUserNotBlocked(clienteId);
+    return jdbc.queryForList("""
+        SELECT pu.identificador puja_id,
+               i.identificador item_id,
+               p.descripcionCatalogo producto,
+               pu.importe,
+               pu.ganador
+        FROM pujos pu
+        JOIN asistentes a ON a.identificador=pu.asistente
+        JOIN itemsCatalogo i ON i.identificador=pu.item
+        JOIN catalogos ca ON ca.identificador=i.catalogo
+        JOIN productos p ON p.identificador=i.producto
+        WHERE a.cliente=?
+          AND ca.subasta=?
+        ORDER BY pu.identificador ASC
+        """, clienteId, subastaId);
   }
 
   @PutMapping("/profile/{clienteId}")

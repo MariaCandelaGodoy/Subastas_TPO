@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 
 function resolveApiUrl() {
   if (process.env.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
+  if (Platform.OS === 'web' && __DEV__) return 'http://localhost:8080/api';
   const configuredUrl = Constants.expoConfig?.extra?.apiUrl;
   if (typeof configuredUrl === 'string' && configuredUrl.trim()) return configuredUrl;
   if (Platform.OS === 'web') return 'http://localhost:8080/api';
@@ -310,8 +311,43 @@ export const api = {
   metrics: async (userId: number) => {
     const payload = await request<any>(`/profile/${userId}/metrics`);
     const profile = payload.profile ?? {};
-    const history = payload.history ?? [];
-    const totalOfertado = history.reduce((sum: number, item: any) => sum + Number(item.importe ?? 0), 0);
+    const rawHistory = payload.history ?? [];
+    const grouped = new Map<number, any>();
+    rawHistory.forEach((item: any, index: number) => {
+      const auctionId = Number(item.subasta_id);
+      if (!auctionId) return;
+      const current = grouped.get(auctionId);
+      const hasBid = item.item_id != null && item.importe != null && Number(item.pujas ?? 1) > 0;
+      const bid = hasBid ? {
+        puja_id: item.puja_id ?? index + 1,
+        item_id: item.item_id,
+        producto: item.producto ?? item.subasta,
+        importe: item.importe,
+        ganador: item.ganador,
+      } : null;
+      if (!current) {
+        grouped.set(auctionId, {
+          ...item,
+          subasta_id: auctionId,
+          pujas: Number(item.pujas ?? (hasBid ? 1 : 0)),
+          items_participados: Number(item.items_participados ?? (hasBid ? 1 : 0)),
+          bids: bid ? [bid] : [],
+          _items: new Set(hasBid ? [item.item_id] : []),
+        });
+        return;
+      }
+      if (!bid) return;
+      current.pujas = Number(current.pujas ?? 0) + 1;
+      current._items.add(item.item_id);
+      current.items_participados = current._items.size;
+      current.ganador = current.ganador === 'si' || item.ganador === 'si' ? 'si' : 'no';
+      current.bids.unshift(bid);
+    });
+    const history = Array.from(grouped.values()).map((item) => {
+      const { _items, ...clean } = item;
+      return clean;
+    });
+    const totalOfertado = Number(profile.total_ofertado ?? rawHistory.reduce((sum: number, item: any) => sum + Number(item.importe ?? 0), 0));
     return {
       asistidas: Number(profile.subastas_asistidas ?? 0),
       ganadas: Number(profile.subastas_ganadas ?? 0),
@@ -326,6 +362,8 @@ export const api = {
       history,
     };
   },
+  participationBids: async (userId: number, auctionId: number) =>
+    request<any[]>(`/profile/${userId}/participations/${auctionId}/bids`),
   profile: async (userId: number) => mapUser({ token: '', user: await request<any>(`/profile/${userId}`) }),
   updateProfile: async (userId: number, payload: Record<string, string>) => {
     const updated = await request<any>(`/profile/${userId}`, {
