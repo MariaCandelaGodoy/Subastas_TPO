@@ -528,7 +528,7 @@ function AuctionDetailScreen({
     api.auction(auctionId, session?.userId).then((data) => {
       setDetail(data);
       setFavorite(data.auction.favorito);
-    }).catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.'));
+    }).catch((error) => Alert.alert('Error', error instanceof Error ? error.message : 'No se pudo cargar la subasta.'));
   }, [auctionId, session?.userId]);
 
   if (!detail) {
@@ -702,7 +702,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [liveStatus, setLiveStatus] = useState('Conectando en vivo...');
-  const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(0);
   const [closeRetryTick, setCloseRetryTick] = useState(0);
   const closingItemRef = useRef<number | null>(null);
   const alertedItemRef = useRef<number | null>(null);
@@ -714,7 +714,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     const current = liveItem ?? selectedItem ?? data.products[0];
     setDetail(data);
     setSelected(current);
-    setRemainingSeconds(current?.itemTiempoRestanteSegundos ?? data.auction.tiempoRestanteSegundos);
+    setRemainingSeconds(current?.itemTiempoRestanteSegundos ?? null);
     if (resetAmount) setAmount(String(current?.ofertaMinima ?? ''));
     return data;
   });
@@ -760,7 +760,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
   useEffect(() => { load().catch(() => Alert.alert('Error', 'No se pudo cargar la subasta.')); }, [auctionId]);
   useEffect(() => {
     const timer = setInterval(() => {
-      setRemainingSeconds((current) => Math.max(0, current - 1));
+      setRemainingSeconds((current) => current == null ? null : Math.max(0, current - 1));
     }, 1000);
     return () => clearInterval(timer);
   }, []);
@@ -771,7 +771,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     return () => clearInterval(refresh);
   }, [auctionId, session?.userId]);
   useEffect(() => {
-    if (!selected || selected.itemEstado !== 'en_vivo' || remainingSeconds > 0) return;
+    if (!selected || selected.itemEstado !== 'en_vivo' || remainingSeconds == null || remainingSeconds > 0) return;
     const retry = setInterval(() => {
       setCloseRetryTick((current) => current + 1);
     }, 3000);
@@ -796,7 +796,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
           setLiveStatus(hasMoreLots ? 'Lote cerrado. Buscando siguiente pieza...' : 'Subasta finalizada');
         } else if (event.tipo === 'ITEM_EN_VIVO') {
           await load(true);
-          setLiveStatus('Nuevo lote en vivo');
+          setLiveStatus(Number(event.itemTiempoRestanteSegundos) > 0 ? 'Lote en vivo' : 'Nuevo lote en vivo');
         } else if (event.tipo === 'SUBASTA_FINALIZADA') {
           const data = await load(true);
           setLiveStatus('Subasta finalizada');
@@ -812,7 +812,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
     return () => socket.close();
   }, [auctionId, session?.userId]);
   useEffect(() => {
-    if (!selected || selected.itemEstado !== 'en_vivo' || remainingSeconds > 0) return;
+    if (!selected || selected.itemEstado !== 'en_vivo' || remainingSeconds == null || remainingSeconds > 0) return;
     if (closingItemRef.current === selected.id) return;
     closingItemRef.current = selected.id;
     api.closeItem(auctionId, selected.id)
@@ -864,7 +864,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
             <RankBadge category={detail.auction.categoria} />
           </View>
           <View style={styles.statsRow}>
-            <Stat label="Tiempo del lote" value={formatDuration(remainingSeconds)} />
+            <Stat label="Tiempo del lote" value={remainingSeconds == null ? 'Sin iniciar' : formatDuration(remainingSeconds)} />
             <Stat label="Espectadores" value={String(detail.auction.espectadores)} />
           </View>
         </View>
@@ -905,7 +905,7 @@ function AuctionLiveScreen({ auctionId, initialProduct, session, onBack, onPayme
           </View>
           <Text style={styles.range}>Minimo {selected.ofertaMinima.toLocaleString()} {selected.ofertaMaxima ? ` | Maximo ${selected.ofertaMaxima.toLocaleString()}` : ' | Sin maximo para Oro/Platino'}</Text>
           <Field label="Tu puja" value={amount} onChangeText={setAmount} keyboardType="numeric" />
-          <PrimaryButton label={loading ? 'Confirmando...' : 'Pujar'} onPress={placeBid} disabled={loading || detail.auction.estado !== 'EN_VIVO' || selected.itemEstado !== 'en_vivo' || remainingSeconds <= 0} />
+          <PrimaryButton label={loading ? 'Confirmando...' : 'Pujar'} onPress={placeBid} disabled={loading || detail.auction.estado !== 'EN_VIVO' || selected.itemEstado !== 'en_vivo' || remainingSeconds == null || remainingSeconds <= 0} />
         </>
       )}
     </Screen>
