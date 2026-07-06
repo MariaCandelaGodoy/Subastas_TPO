@@ -800,6 +800,24 @@ public class ApiController {
         """, userId);
   }
 
+  @GetMapping("/penalties")
+  List<Map<String, Object>> penalties(@RequestParam int userId) {
+    refreshOverduePenalties();
+    return jdbc.queryForList("""
+        SELECT m.identificador id, m.factura factura_id, m.registro registro_id, m.importe_base,
+               m.importe_multa, m.vencimiento, m.estado, m.motivo, m.creado_en, m.pagado_en,
+               COALESCE(sc.moneda, 'ARS') moneda,
+               COALESCE(p.descripcionCatalogo, CONCAT('Factura #', m.factura)) producto
+        FROM multas_incumplimiento m
+        LEFT JOIN registroDeSubasta r ON r.identificador=m.registro
+        LEFT JOIN subastas s ON s.identificador=r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta=s.identificador
+        LEFT JOIN productos p ON p.identificador=r.producto
+        WHERE m.cliente=?
+        ORDER BY m.estado='pendiente' DESC, m.estado='derivada_justicia' DESC, m.creado_en DESC
+        """, userId);
+  }
+
   @PostMapping("/shipping/shipments")
   @Transactional
   Map<String, Object> createShipment(@RequestBody ShipmentRequest request) {
@@ -913,6 +931,70 @@ public class ApiController {
         LEFT JOIN envios e ON e.identificador=fc.envio
         WHERE fc.identificador=?
         """, "Factura no encontrada", invoiceId);
+  }
+
+  @PutMapping("/penalties/{penaltyId}/pay")
+  @Transactional
+  Map<String, Object> payPenalty(@PathVariable int penaltyId, @RequestBody PayInvoiceRequest request) {
+    var penalty = one("""
+        SELECT m.identificador, m.cliente, m.importe_multa, m.estado,
+               COALESCE(sc.moneda, 'ARS') moneda
+        FROM multas_incumplimiento m
+        LEFT JOIN registroDeSubasta r ON r.identificador=m.registro
+        LEFT JOIN subastas s ON s.identificador=r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta=s.identificador
+        WHERE m.identificador=?
+        """, "Multa no encontrada", penaltyId);
+    if (((Number) penalty.get("cliente")).intValue() != request.userId()) {
+      throw new ApiException(HttpStatus.FORBIDDEN, "La multa no pertenece al usuario");
+    }
+    if ("pagada".equals(penalty.get("estado"))) {
+      return penalty;
+    }
+    var payment = one("""
+        SELECT identificador, verificado, tipo, moneda,
+               COALESCE(resultado_pago_simulado, 'aprobado') resultado_pago_simulado
+        FROM medios_pago
+        WHERE identificador=? AND cliente=? AND activo='si'
+        """, "Medio de pago no encontrado", request.paymentMethodId(), request.userId());
+    if (!"si".equals(payment.get("verificado"))) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "El medio de pago esta pendiente de verificacion");
+    }
+    String penaltyCurrency = Objects.toString(penalty.get("moneda"), "");
+    String paymentCurrency = Objects.toString(payment.get("moneda"), "");
+    String paymentType = Objects.toString(payment.get("tipo"), "").toLowerCase();
+    if (!penaltyCurrency.equals(paymentCurrency)) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "La multa esta en " + penaltyCurrency + ". Selecciona un medio de pago en esa moneda.");
+    }
+    if ("USD".equals(penaltyCurrency) && !("cuenta".equals(paymentType) || "tarjeta".equals(paymentType))) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "Las multas en dolares solo pueden pagarse con transferencia o tarjeta internacional.");
+    }
+    String simulated = Objects.toString(payment.get("resultado_pago_simulado"), "");
+    if ("fondos_insuficientes".equals(simulated)) {
+      throw new ApiException(HttpStatus.PAYMENT_REQUIRED, "Pago rechazado por fondos insuficientes.");
+    }
+    if ("rechazado".equals(simulated)) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, "La pasarela simulada rechazo el pago con este medio.");
+    }
+    jdbc.update("""
+        UPDATE multas_incumplimiento
+        SET estado='pagada', pagado_en=CURRENT_TIMESTAMP
+        WHERE identificador=?
+        """, penaltyId);
+    jdbc.update("""
+        INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
+        VALUES (?, 'Multa pagada', 'Registramos el pago de tu multa. Ya podes volver a participar en subastas.', 'importante')
+        """, request.userId());
+    return one("""
+        SELECT m.identificador id, m.factura factura_id, m.registro registro_id, m.importe_base,
+               m.importe_multa, m.vencimiento, m.estado, m.motivo, m.creado_en, m.pagado_en,
+               COALESCE(sc.moneda, 'ARS') moneda
+        FROM multas_incumplimiento m
+        LEFT JOIN registroDeSubasta r ON r.identificador=m.registro
+        LEFT JOIN subastas s ON s.identificador=r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta=s.identificador
+        WHERE m.identificador=?
+        """, "Multa no encontrada", penaltyId);
   }
 
 

@@ -7,7 +7,7 @@ import { BottomTabs, Header, RankBadge, TabKey } from './src/components/Chrome';
 import { Screen } from './src/components/Screen';
 import { colors, shadow } from './src/theme/theme';
 
-type Route = 'splash' | 'login' | 'forgotPassword' | 'register' | 'terms' | 'app' | 'auction' | 'productDetail' | 'bidRoom' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'purchaseInvoice' | 'shipmentDetail' | 'myPieces' | 'metrics';
+type Route = 'splash' | 'login' | 'forgotPassword' | 'register' | 'terms' | 'app' | 'auction' | 'productDetail' | 'bidRoom' | 'selectPayment' | 'payments' | 'settings' | 'editProfile' | 'shipping' | 'coordinateShipping' | 'purchaseInvoice' | 'payPenalty' | 'shipmentDetail' | 'myPieces' | 'metrics';
 type AuctionFilter = 'EN_VIVO' | 'FAVORITAS' | 'PROGRAMADA';
 
 function imageSource(value?: string | null) {
@@ -32,6 +32,7 @@ function BidVaultApp() {
   const [selectedCurrency, setSelectedCurrency] = useState<string>('USD');
   const [selectedShipment, setSelectedShipment] = useState<any | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
+  const [selectedPenalty, setSelectedPenalty] = useState<any | null>(null);
   const [paymentBackRoute, setPaymentBackRoute] = useState<Route>('settings');
   const [termsBackRoute, setTermsBackRoute] = useState<Route>('login');
 
@@ -78,9 +79,10 @@ function BidVaultApp() {
   if (route === 'selectPayment' && selectedAuction) return session ? <SelectPaymentScreen session={session} auctionId={selectedAuction} onBack={() => setRoute('auction')} onDone={() => setRoute('bidRoom')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'payments') return <PaymentsScreen session={session} onBack={() => setRoute(paymentBackRoute)} />;
   if (route === 'editProfile') return session ? <EditProfileScreen session={session} onBack={() => setRoute('settings')} onSaved={(updated) => setSession({ ...session, ...updated, token: session.token })} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
-  if (route === 'shipping') return session ? <ShippingScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'shipping') return session ? <ShippingScreen session={session} onBack={() => setRoute('settings')} onPayPenalty={(penalty) => { setSelectedPenalty(penalty); setRoute('payPenalty'); }} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'coordinateShipping') return session ? <CoordinateShippingScreen session={session} onBack={() => setRoute('app')} onDone={(shipment) => { setSelectedShipment(shipment); setSelectedInvoice(shipment); setRoute('purchaseInvoice'); }} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'purchaseInvoice') return session ? <PurchaseInvoiceScreen session={session} invoice={selectedInvoice} onBack={() => setRoute('shipping')} onDone={() => setRoute('shipmentDetail')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
+  if (route === 'payPenalty') return session ? <PenaltyPaymentScreen session={session} penalty={selectedPenalty} onBack={() => setRoute('shipping')} onDone={() => setRoute('shipping')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'shipmentDetail') return session ? <ShipmentDetailScreen session={session} shipment={selectedShipment} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'myPieces') return session ? <MyPiecesScreen session={session} onBack={() => setRoute('settings')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
   if (route === 'metrics') return session ? <MetricsScreen session={session} onBack={() => setRoute('app')} /> : <LoginScreen onLogin={openApp} onRegister={() => setRoute('register')} onForgot={() => setRoute('forgotPassword')} onGuest={() => setRoute('app')} onTerms={() => setRoute('terms')} />;
@@ -1386,6 +1388,70 @@ function InvoiceLine({ label, value, currency, strong }: { label: string; value:
   );
 }
 
+function PenaltyPaymentScreen({ session, penalty, onBack, onDone }: { session: UserSession; penalty: any | null; onBack: () => void; onDone: () => void }) {
+  const [payments, setPayments] = useState<any[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [paying, setPaying] = useState(false);
+  useEffect(() => {
+    api.payments(session.userId).then((data: any) => {
+      setPayments(data);
+      const penaltyCurrency = String(penalty?.moneda ?? 'ARS').toUpperCase();
+      setSelected(data.find((item: any) => {
+        const itemCurrency = String(item.moneda ?? (item.internacional ? 'USD' : 'ARS')).toUpperCase();
+        const itemType = String(item.tipo ?? '').toUpperCase();
+        const compatible = itemCurrency === penaltyCurrency && (penaltyCurrency !== 'USD' || itemType.includes('CUENTA') || itemType.includes('TARJETA'));
+        return item.estado === 'VERIFICADO' && compatible;
+      })?.id ?? null);
+    });
+  }, [session.userId, penalty?.moneda]);
+  const penaltyId = Number(penalty?.id ?? 0);
+  const amount = Number(penalty?.importe_multa ?? 0);
+  const currency = String(penalty?.moneda ?? 'ARS').toUpperCase();
+  const isPaymentCompatible = (item: any) => {
+    const itemCurrency = String(item.moneda ?? (item.internacional ? 'USD' : 'ARS')).toUpperCase();
+    const itemType = String(item.tipo ?? '').toUpperCase();
+    if (itemCurrency !== currency) return false;
+    if (currency === 'USD') return itemType.includes('CUENTA') || itemType.includes('TARJETA');
+    return true;
+  };
+  const compatiblePayments = payments.filter(isPaymentCompatible);
+  const pay = async () => {
+    if (!penaltyId) return Alert.alert('Multa no disponible', 'No pudimos encontrar la multa.');
+    const method = payments.find((item) => item.id === selected);
+    if (!method) return Alert.alert('Medio de pago requerido', 'Seleccioná un medio de pago.');
+    if (method.estado !== 'VERIFICADO') return Alert.alert('Medio pendiente', 'Solo podés pagar con medios verificados.');
+    if (!isPaymentCompatible(method)) return Alert.alert('Medio no compatible', `Seleccioná un medio de pago en ${currency}.`);
+    setPaying(true);
+    try {
+      await api.payPenalty(penaltyId, { userId: session.userId, paymentMethodId: selected });
+      Alert.alert('Multa pagada', 'La multa quedó pagada correctamente.', [{ text: 'Aceptar', onPress: onDone }]);
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'No pudimos registrar el pago.');
+    } finally {
+      setPaying(false);
+    }
+  };
+  return (
+    <Screen style={styles.configScreen}>
+      <ConfigHeader title="Pago de multa" onBack={onBack} />
+      <View style={styles.invoiceCard}>
+        <Text style={styles.invoiceNumber}>MULTA #{penaltyId || '-'}</Text>
+        <Text style={styles.invoiceProduct}>Multa por incumplimiento</Text>
+        <Text style={styles.description}>{penalty?.motivo ?? 'Pago rechazado por fondos insuficientes.'}</Text>
+        <InvoiceLine label="Importe base" value={Number(penalty?.importe_base ?? 0)} currency={currency} />
+        <InvoiceLine label="Multa 10%" value={amount} currency={currency} strong />
+      </View>
+      <Text style={styles.sectionTitle}>Método de pago</Text>
+      {compatiblePayments.map((item) => (
+        <SelectablePayment key={item.id} item={item} selected={selected === item.id} onPress={() => setSelected(item.id)} />
+      ))}
+      {payments.length === 0 ? <Text style={styles.emptyText}>No tenés métodos de pago cargados.</Text> : null}
+      {payments.length > 0 && compatiblePayments.length === 0 ? <Text style={styles.emptyText}>No tenés métodos compatibles para pagar esta multa.</Text> : null}
+      <PrimaryButton label={paying ? 'Pagando...' : 'Pagar multa'} onPress={pay} disabled={paying} />
+    </Screen>
+  );
+}
+
 function ShipmentDetailScreen({ session, shipment, onBack }: { session: UserSession; shipment: any | null; onBack: () => void }) {
   const [current, setCurrent] = useState<any | null>(shipment);
   useEffect(() => { if (!shipment) api.shipments(session.userId).then((data: any) => setCurrent(data[0] ?? null)); }, [session.userId, shipment]);
@@ -1686,10 +1752,12 @@ function EditProfileScreen({ session, onBack, onSaved }: { session: UserSession;
   );
 }
 
-function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () => void }) {
+function ShippingScreen({ session, onBack, onPayPenalty }: { session: UserSession; onBack: () => void; onPayPenalty: (penalty: any) => void }) {
   const [addresses, setAddresses] = useState<any[]>([]);
   const [shipments, setShipments] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
+  const [penalties, setPenalties] = useState<any[]>([]);
+  const [penaltiesError, setPenaltiesError] = useState('');
   const [editing, setEditing] = useState<any | null>(null);
   const [addressFormOpen, setAddressFormOpen] = useState(false);
   const [form, setForm] = useState({ titulo: '', direccion: '', ciudad: '', pais: '', predeterminada: true });
@@ -1697,6 +1765,12 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
     api.addresses(session.userId).then(setAddresses).catch(() => setAddresses([]));
     api.shipments(session.userId).then((data: any) => setShipments(data)).catch(() => setShipments([]));
     api.invoices(session.userId).then((data: any) => setInvoices(data)).catch(() => setInvoices([]));
+    api.penalties(session.userId)
+      .then((data: any) => { setPenalties(data); setPenaltiesError(''); })
+      .catch((error) => {
+        setPenalties([]);
+        setPenaltiesError(error instanceof Error ? error.message : 'No pudimos cargar tus multas.');
+      });
   }, [session.userId]);
   const openNewAddress = () => {
     setEditing(null);
@@ -1782,6 +1856,14 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
       ))}
       {shipments.filter((shipment) => shipment.estado !== 'entregado').length === 0 ? <Text style={styles.emptyText}>No hay envíos en curso en la base.</Text> : null}
       <Text style={styles.sectionTitle}>Facturas</Text>
+      {penaltiesError ? <Text style={styles.emptyText}>No pudimos cargar tus multas: {penaltiesError}</Text> : null}
+      {penalties.filter((penalty) => penalty.estado !== 'pagada').map((penalty) => (
+        <Pressable key={penalty.id} onPress={() => onPayPenalty(penalty)} style={styles.invoiceMiniCard}>
+          <Text style={styles.historyTitle}>Multa por incumplimiento</Text>
+          <Text style={styles.settingsDetail}>{penalty.producto ?? penalty.motivo}</Text>
+          <Text style={styles.invoiceTotal}>${Number(penalty.importe_multa ?? 0).toLocaleString()} {penalty.moneda ?? 'ARS'} • {String(penalty.estado).toUpperCase()}</Text>
+        </Pressable>
+      ))}
       {invoices.map((invoice) => (
         <View key={invoice.id} style={styles.invoiceMiniCard}>
           <Text style={styles.historyTitle}>{invoice.numero}</Text>
@@ -1789,7 +1871,7 @@ function ShippingScreen({ session, onBack }: { session: UserSession; onBack: () 
           <Text style={styles.invoiceTotal}>${Number(invoice.total ?? 0).toLocaleString()} • {String(invoice.estado).toUpperCase()}</Text>
         </View>
       ))}
-      {invoices.length === 0 ? <Text style={styles.emptyText}>No hay facturas registradas en la base.</Text> : null}
+      {invoices.length === 0 && penalties.length === 0 ? <Text style={styles.emptyText}>No hay facturas registradas en la base.</Text> : null}
       <Text style={styles.sectionTitle}>Historial de envios</Text>
       {shipments.filter((shipment) => shipment.estado === 'entregado').map((shipment) => (
         <View key={shipment.id} style={styles.historyItem}>
