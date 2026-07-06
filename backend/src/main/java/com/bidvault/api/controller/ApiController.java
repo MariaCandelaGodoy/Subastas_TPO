@@ -420,7 +420,7 @@ public class ApiController {
     int subastaId = ((Number) data.get("subasta")).intValue();
     ensureLiveItem(subastaId);
     ensureCanParticipate(request.clienteId(), subastaId, false);
-    var guarantee = ensureAuctionGuarantee(request.clienteId(), subastaId);
+    ensureAuctionGuarantee(request.clienteId(), subastaId);
     if (!"en_vivo".equals(data.get("item_estado")) || data.get("item_tiempo_restante_segundos") == null ||
         ((Number) data.get("item_tiempo_restante_segundos")).intValue() <= 0) {
       throw new ApiException(HttpStatus.CONFLICT, "Este item no esta en vivo para recibir pujas.");
@@ -435,7 +435,6 @@ public class ApiController {
     if (!category.equals("oro") && !category.equals("platino") && amount.compareTo(max) > 0) {
       throw new ApiException(HttpStatus.BAD_REQUEST, "La puja máxima para esta categoría es " + max);
     }
-    ensurePaymentLimit(guarantee, amount, "realizar esta puja");
     int asistenteId = ensureAssistant(request.clienteId(), subastaId);
     jdbc.update("UPDATE pujos SET ganador='no' WHERE item=?", request.itemId());
     int bidId = insertAndReturnKey("INSERT INTO pujos (asistente, item, importe, ganador) VALUES (?, ?, ?, 'si')",
@@ -524,6 +523,8 @@ public class ApiController {
         INSERT INTO registroDeSubasta (subasta, duenio, producto, cliente, importe, comision)
         VALUES (?, ?, ?, ?, ?, ?)
         """, id, w.get("duenio"), w.get("producto"), w.get("cliente"), importe, comision);
+    Map<String, Object> invoice = ensureInvoiceForRegistry(registro);
+    Map<String, Object> charge = autoChargeInvoice(id, invoice);
     jdbc.update("UPDATE itemsCatalogo SET subastado='si' WHERE identificador=?", itemId);
     jdbc.update("""
         UPDATE items_subasta_estado
@@ -539,8 +540,8 @@ public class ApiController {
     }
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
-        VALUES (?, 'Ganaste la subasta', ?, 'importante')
-        """, w.get("cliente"), "Importe: " + importe + ". Comisión: " + comision + ". Coordiná envío o retiro.");
+        VALUES (?, 'Factura de compra', ?, 'importante')
+        """, w.get("cliente"), charge.get("mensaje"));
     jdbc.update("""
         INSERT INTO mensajes (cliente, titulo, cuerpo, tipo)
         SELECT DISTINCT a.cliente,
@@ -551,7 +552,8 @@ public class ApiController {
         JOIN asistentes a ON a.identificador=p.asistente
         WHERE p.item=? AND a.cliente<>?
         """, importe, itemId, w.get("cliente"));
-    return Map.of("registro_id", registro, "cliente_id", w.get("cliente"), "importe", importe, "comision", comision, "empresa_compra", empresaCompra);
+    return Map.of("registro_id", registro, "cliente_id", w.get("cliente"), "importe", importe, "comision", comision,
+        "empresa_compra", empresaCompra, "factura_id", invoice.get("identificador"), "pago_estado", charge.get("estado"));
   }
 
   @GetMapping("/payments/{clienteId}")
@@ -967,7 +969,7 @@ public class ApiController {
     }
     BigDecimal invoiceTotal = (BigDecimal) invoice.get("total");
     boolean simulatedInsufficientFunds = "fondos_insuficientes".equals(Objects.toString(payment.get("resultado_pago_simulado"), ""));
-    boolean checkInsufficientFunds = "cheque".equals(paymentType) &&
+    boolean checkInsufficientFunds =
         payment.get("monto_reservado") != null &&
         ((BigDecimal) payment.get("monto_reservado")).compareTo(invoiceTotal) < 0;
     if (simulatedInsufficientFunds || checkInsufficientFunds) {
@@ -1310,6 +1312,112 @@ public class ApiController {
         """, registroId, envioId, numero, subtotal, comision, costoEnvio, total);
   }
 
+  private Map<String, Object> ensureInvoiceForRegistry(int registroId) {
+    var existing = jdbc.queryForList("""
+        SELECT fc.identificador, fc.numero, fc.subtotal, fc.comision, fc.costo_envio, fc.total, fc.estado,
+               r.cliente, r.identificador registro, COALESCE(sc.moneda, 'ARS') moneda
+        FROM facturas_compra fc
+        JOIN registroDeSubasta r ON r.identificador=fc.registro
+        JOIN subastas s ON s.identificador=r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
+        WHERE fc.registro=?
+        """, registroId);
+    if (!existing.isEmpty()) {
+      return existing.get(0);
+    }
+    var row = one("""
+        SELECT r.identificador registro, r.cliente, r.importe, r.comision,
+               COALESCE(sc.moneda, 'ARS') moneda
+        FROM registroDeSubasta r
+        JOIN subastas s ON s.identificador=r.subasta
+        LEFT JOIN subastas_config sc ON sc.subasta = s.identificador
+        WHERE r.identificador=?
+        """, "Compra no encontrada", registroId);
+    BigDecimal subtotal = (BigDecimal) row.get("importe");
+    BigDecimal comision = (BigDecimal) row.get("comision");
+    BigDecimal costoEnvio = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    BigDecimal total = subtotal.add(comision).add(costoEnvio).setScale(2, RoundingMode.HALF_UP);
+    String numero = "BV-F-" + registroId + "-" + UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+    int invoiceId = insertAndReturnKey("""
+        INSERT INTO facturas_compra (registro, numero, subtotal, comision, costo_envio, total, estado)
+        VALUES (?, ?, ?, ?, ?, ?, 'pendiente_pago')
+        """, registroId, numero, subtotal, comision, costoEnvio, total);
+    var invoice = new java.util.LinkedHashMap<String, Object>();
+    invoice.put("identificador", invoiceId);
+    invoice.put("numero", numero);
+    invoice.put("subtotal", subtotal);
+    invoice.put("comision", comision);
+    invoice.put("costo_envio", costoEnvio);
+    invoice.put("total", total);
+    invoice.put("estado", "pendiente_pago");
+    invoice.put("cliente", row.get("cliente"));
+    invoice.put("registro", row.get("registro"));
+    invoice.put("moneda", row.get("moneda"));
+    return invoice;
+  }
+
+  private Map<String, Object> autoChargeInvoice(int subastaId, Map<String, Object> invoice) {
+    var payments = jdbc.queryForList("""
+        SELECT m.identificador, m.verificado, m.tipo, m.moneda, m.monto_reservado,
+               COALESCE(m.resultado_pago_simulado, 'aprobado') resultado_pago_simulado
+        FROM garantias_subasta g
+        JOIN medios_pago m ON m.identificador=g.medio_pago
+        WHERE g.cliente=? AND g.subasta=? AND m.activo='si'
+        ORDER BY g.identificador DESC
+        LIMIT 1
+        """, invoice.get("cliente"), subastaId);
+    if (payments.isEmpty()) {
+      return Map.of(
+          "estado", "pendiente_pago",
+          "mensaje", "Factura " + invoice.get("numero") + " pendiente: no hay medio de pago seleccionado para cobrar automaticamente.");
+    }
+    var payment = payments.get(0);
+    String invoiceCurrency = Objects.toString(invoice.get("moneda"), "");
+    String paymentCurrency = Objects.toString(payment.get("moneda"), "");
+    String paymentType = Objects.toString(payment.get("tipo"), "").toLowerCase();
+    String simulatedResult = Objects.toString(payment.get("resultado_pago_simulado"), "");
+    BigDecimal total = (BigDecimal) invoice.get("total");
+    if (!"si".equals(payment.get("verificado"))) {
+      return Map.of(
+          "estado", "pendiente_pago",
+          "mensaje", "Factura " + invoice.get("numero") + " pendiente: el medio de pago elegido no esta verificado.");
+    }
+    if (!invoiceCurrency.equals(paymentCurrency)) {
+      return Map.of(
+          "estado", "pendiente_pago",
+          "mensaje", "Factura " + invoice.get("numero") + " pendiente: el medio elegido no coincide con la moneda " + invoiceCurrency + ".");
+    }
+    if ("USD".equals(invoiceCurrency) && !("cuenta".equals(paymentType) || "tarjeta".equals(paymentType))) {
+      return Map.of(
+          "estado", "pendiente_pago",
+          "mensaje", "Factura " + invoice.get("numero") + " pendiente: las subastas en dolares se cobran con transferencia o tarjeta internacional.");
+    }
+    boolean simulatedInsufficientFunds = "fondos_insuficientes".equals(simulatedResult);
+    boolean limitInsufficientFunds =
+        payment.get("monto_reservado") != null &&
+        ((BigDecimal) payment.get("monto_reservado")).compareTo(total) < 0;
+    if (simulatedInsufficientFunds || limitInsufficientFunds) {
+      createPaymentFailurePenalty(invoice, "Pago automatico rechazado por fondos insuficientes en la pasarela simulada");
+      BigDecimal penalty = total.multiply(new BigDecimal("0.10")).setScale(2, RoundingMode.HALF_UP);
+      return Map.of(
+          "estado", "multa_generada",
+          "mensaje", "Factura " + invoice.get("numero") + " pendiente. El cobro automatico fue rechazado por fondos insuficientes y se genero una multa de " + penalty + ".");
+    }
+    if ("rechazado".equals(simulatedResult)) {
+      return Map.of(
+          "estado", "pendiente_pago",
+          "mensaje", "Factura " + invoice.get("numero") + " pendiente: la pasarela simulada rechazo el pago con este medio.");
+    }
+    jdbc.update("""
+        UPDATE facturas_compra
+        SET medio_pago=?, estado='pagada', pagado_en=CURRENT_TIMESTAMP
+        WHERE identificador=?
+        """, payment.get("identificador"), invoice.get("identificador"));
+    return Map.of(
+        "estado", "pagada",
+        "mensaje", "Factura " + invoice.get("numero") + " pagada automaticamente con el medio elegido para la subasta.");
+  }
+
   private void createPaymentFailurePenalty(Map<String, Object> invoice, String reason) {
     ensurePenaltyTable();
     BigDecimal total = (BigDecimal) invoice.get("total");
@@ -1592,12 +1700,11 @@ public class ApiController {
   }
 
   private void ensurePaymentLimit(Map<String, Object> payment, BigDecimal requiredAmount, String operation) {
-    if (!"cheque".equals(Objects.toString(payment.get("tipo"), "").toLowerCase())) return;
     if (requiredAmount == null) return;
     Object rawLimit = payment.get("monto_reservado");
     if (!(rawLimit instanceof BigDecimal limit) || limit.compareTo(requiredAmount) < 0) {
       throw new ApiException(HttpStatus.BAD_REQUEST,
-          "El cheque certificado no alcanza para " + operation + ". Limite disponible: " +
+          "El medio de pago no alcanza para " + operation + ". Limite disponible: " +
               Objects.toString(rawLimit, "0") + ". Monto requerido: " + requiredAmount + ".");
     }
   }

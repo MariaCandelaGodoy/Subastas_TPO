@@ -932,8 +932,8 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
       Alert.alert('Datos requeridos', 'Completá entidad y referencia.');
       return;
     }
-    if (formType === 'CHEQUE_CERTIFICADO' && !Number(form.monto)) {
-      Alert.alert('Monto requerido', 'Para cheques certificados cargá el monto reservado.');
+    if (!Number(form.monto)) {
+      Alert.alert('Límite requerido', 'Cargá el límite disponible de este medio de pago.');
       return;
     }
     try {
@@ -944,7 +944,7 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
         internacional: form.moneda === 'USD',
         ultimosDigitos: form.referencia.slice(-4),
         referencia: form.referencia,
-        garantiaDisponible: formType === 'CHEQUE_CERTIFICADO' ? Number(form.monto) : null,
+        garantiaDisponible: Number(form.monto),
       });
       setItems((current) => [...current, created]);
       setForm({ entidad: '', referencia: '', moneda: 'ARS', monto: '' });
@@ -974,7 +974,7 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
               </Pressable>
             ))}
           </View>
-          {formType === 'CHEQUE_CERTIFICADO' ? <Field label="Monto reservado" value={form.monto} onChangeText={(value: string) => setForm((current) => ({ ...current, monto: value }))} keyboardType="numeric" /> : null}
+          <Field label={formType === 'TARJETA_CREDITO' ? 'Límite disponible' : 'Monto reservado'} value={form.monto} onChangeText={(value: string) => setForm((current) => ({ ...current, monto: value }))} keyboardType="numeric" />
           <PrimaryButton label="Guardar pendiente" onPress={addPayment} />
           <Pressable onPress={() => setFormType(null)} style={styles.cancelButton}><Text style={styles.cancelText}>Cancelar</Text></Pressable>
         </View>
@@ -983,6 +983,7 @@ function PaymentsScreen({ session, onBack }: { session: UserSession | null; onBa
         <View key={item.id} style={styles.paymentCard}>
           <Text style={styles.paymentBrand}>{item.etiqueta}</Text>
           <Text style={styles.description}>{paymentTypeLabel(item.tipo)} / .... .... .... {item.ultimosDigitos}</Text>
+          {item.garantiaDisponible != null ? <Text style={styles.description}>Límite: {Number(item.garantiaDisponible).toLocaleString()} {item.moneda}</Text> : null}
           <Text style={styles.verified}>{item.estado} {item.internacional ? 'INTERNACIONAL' : 'NACIONAL'}</Text>
         </View>
       ))}
@@ -1011,7 +1012,7 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
     });
   }, [auctionId, session.userId]);
   const isCompatible = (item: any) => String(item.moneda ?? (item.internacional ? 'USD' : 'ARS')).toUpperCase() === auctionCurrency;
-  const hasEnoughLimit = (item: any) => !String(item.tipo ?? '').toUpperCase().includes('CHEQUE') || Number(item.garantiaDisponible ?? 0) >= requiredGuarantee;
+  const hasEnoughLimit = (item: any) => Number(item.garantiaDisponible ?? 0) >= requiredGuarantee;
   const verifiedItems = items.filter((item) => item.estado === 'VERIFICADO');
   const compatibleVerifiedItems = verifiedItems.filter((item) => isCompatible(item) && hasEnoughLimit(item));
   const selectPayment = (item: any) => {
@@ -1024,7 +1025,7 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
       return;
     }
     if (!hasEnoughLimit(item)) {
-      Alert.alert('Límite insuficiente', `El cheque certificado debe cubrir al menos ${requiredGuarantee.toLocaleString()} ${auctionCurrency}.`);
+      Alert.alert('Límite insuficiente', `El medio de pago debe cubrir al menos ${requiredGuarantee.toLocaleString()} ${auctionCurrency} para ingresar.`);
       return;
     }
     setSelected(item.id);
@@ -1033,7 +1034,7 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
     const method = items.find((item) => item.id === selected);
     if (!method) return Alert.alert('Método requerido', 'Selecciona un medio verificado para dejar constancia de capacidad de pago.');
     if (!isCompatible(method)) return Alert.alert('Medio no compatible', `Esta subasta opera en ${auctionCurrency}. Selecciona un medio de pago en esa moneda.`);
-    if (!hasEnoughLimit(method)) return Alert.alert('Límite insuficiente', `El cheque certificado debe cubrir al menos ${requiredGuarantee.toLocaleString()} ${auctionCurrency}.`);
+    if (!hasEnoughLimit(method)) return Alert.alert('Límite insuficiente', `El medio de pago debe cubrir al menos ${requiredGuarantee.toLocaleString()} ${auctionCurrency} para ingresar.`);
     try {
       setLoading(true);
       await api.selectAuctionPayment({ userId: session.userId, auctionId, paymentMethodId: selected });
@@ -1065,17 +1066,17 @@ function SelectPaymentScreen({ session, auctionId, onBack, onDone }: { session: 
 function SelectablePayment({ item, selected, disabled, requiredGuarantee = 0, onPress }: { item: any; selected: boolean; disabled?: boolean; requiredGuarantee?: number; onPress: () => void }) {
   const verified = item.estado === 'VERIFICADO';
   const blocked = disabled || !verified;
-  const isCheque = String(item.tipo ?? '').toUpperCase().includes('CHEQUE');
-  const enoughLimit = !isCheque || Number(item.garantiaDisponible ?? 0) >= requiredGuarantee;
+  const hasLimit = item.garantiaDisponible != null;
+  const enoughLimit = Number(item.garantiaDisponible ?? 0) >= requiredGuarantee;
   return (
     <Pressable onPress={onPress} style={[styles.paymentSelectCard, blocked && styles.paymentSelectDisabled]}>
       <View style={{ flex: 1 }}>
         <Text style={styles.paymentBrand}>{item.etiqueta}</Text>
         <Text style={styles.description}>.... .... .... {item.ultimosDigitos}</Text>
         <Text style={[styles.verified, !verified && styles.pendingText]}>{item.estado} {item.moneda ?? (item.internacional ? 'USD' : 'ARS')} {item.internacional ? 'INTERNACIONAL' : 'NACIONAL'}</Text>
-        {isCheque ? <Text style={styles.description}>Límite: {Number(item.garantiaDisponible ?? 0).toLocaleString()} {item.moneda}</Text> : null}
-        {disabled ? <Text style={styles.pendingText}>No compatible con esta subasta</Text> : null}
-        {!enoughLimit ? <Text style={styles.pendingText}>Límite insuficiente para esta subasta</Text> : null}
+        {hasLimit ? <Text style={styles.description}>Límite: {Number(item.garantiaDisponible).toLocaleString()} {item.moneda}</Text> : null}
+        {disabled && enoughLimit ? <Text style={styles.pendingText}>No compatible con esta subasta</Text> : null}
+        {!enoughLimit ? <Text style={styles.pendingText}>Límite insuficiente para ingresar</Text> : null}
       </View>
       <View style={[styles.checkBox, selected && styles.checkBoxSelected, blocked && styles.checkBoxDisabled]} />
     </Pressable>
